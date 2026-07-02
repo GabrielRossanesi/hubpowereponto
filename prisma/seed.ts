@@ -105,6 +105,18 @@ async function main() {
     }
   } else {
     console.log('ℹ️ Operator User already exists, skipping user creation.');
+    if (process.env.SEED_OPERATOR_PASSWORD) {
+      await prisma.account.updateMany({
+        where: {
+          accountId: 'operator@nvhub.com.br',
+          providerId: 'credential'
+        },
+        data: {
+          password: hashedPassword
+        }
+      });
+      console.log('🔑 PASSWORD FOR operator@nvhub.com.br updated in database via environment variable!');
+    }
   }
 
   // 4. Power & Ponto Organization
@@ -171,6 +183,18 @@ async function main() {
     }
   } else {
     console.log('ℹ️ Client User already exists, skipping user creation.');
+    if (process.env.SEED_CLIENT_PASSWORD) {
+      await prisma.account.updateMany({
+        where: {
+          accountId: 'admin@demo.nvhub.com.br',
+          providerId: 'credential'
+        },
+        data: {
+          password: hashedPasswordClient
+        }
+      });
+      console.log('🔑 PASSWORD FOR admin@demo.nvhub.com.br updated in database via environment variable!');
+    }
   }
 
   console.log('🌱 Database seeding completed successfully!');
