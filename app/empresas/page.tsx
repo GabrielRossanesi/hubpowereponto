@@ -1043,6 +1043,7 @@ export default function EmpresasAdminPage() {
                               { key: 'clients', label: 'Clientes', desc: 'Cadastro e gestão de clientes.' },
                               { key: 'proposals', label: 'Propostas', desc: 'Criação e acompanhamento de propostas.' },
                               { key: 'publicProposal', label: 'Página Pública de Proposta', desc: 'Visualização e aceitação online de propostas por clientes.' },
+                              { key: 'financial', label: 'Financeiro', desc: 'Controle independente de contas a pagar, a receber e fluxo de caixa.' },
                             ]
                           },
                           {
@@ -1367,6 +1368,7 @@ export default function EmpresasAdminPage() {
                       { key: 'clients', label: 'Clientes', desc: 'Cadastro e gestão de clientes.' },
                       { key: 'proposals', label: 'Propostas', desc: 'Criação e acompanhamento de propostas.' },
                       { key: 'publicProposal', label: 'Página Pública de Proposta', desc: 'Visualização e aceitação online de propostas por clientes.' },
+                      { key: 'financial', label: 'Financeiro', desc: 'Controle independente de contas a pagar, a receber e fluxo de caixa.' },
                     ]
                   },
                   {
@@ -1634,7 +1636,8 @@ export default function EmpresasAdminPage() {
                           history: 'Histórico',
                           integrations: 'Integrações',
                           team: 'Equipe',
-                          publicProposal: 'Página Pública'
+                          publicProposal: 'Página Pública',
+                          financial: 'Financeiro'
                         };
                         return (
                           <span

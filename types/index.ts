@@ -329,4 +329,59 @@ export interface OrganizationFeatures {
   integrations: boolean;
   team: boolean;
   publicProposal: boolean;
+  financial: boolean; // Novo módulo financeiro
+}
+
+export type FinancialType = 'receivable' | 'payable';
+
+export type FinancialStatus =
+  | 'pending'
+  | 'paid'
+  | 'overdue'
+  | 'cancelled'
+  | 'partial';
+
+export interface FinancialEntry {
+  id: string;
+  organizationId: string;
+  type: FinancialType;
+  title: string;
+  description?: string;
+  amount: number;
+  paidAmount?: number;
+  dueDate: string;
+  paidAt?: string;
+  status: FinancialStatus;
+  category: string;
+  contactName?: string;
+  clientId?: string;
+  supplierName?: string;
+  paymentMethod?: string;
+  isRecurring?: boolean;
+  recurrenceId?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export type RecurrenceFrequency =
+  | 'monthly'
+  | 'quarterly'
+  | 'semiannual'
+  | 'annual';
+
+export interface FinancialRecurrence {
+  id: string;
+  organizationId: string;
+  type: 'receivable' | 'payable';
+  title: string;
+  amount: number;
+  category: string;
+  frequency: RecurrenceFrequency;
+  startDate: string;
+  nextDueDate: string;
+  isActive: boolean;
+  clientId?: string;
+  supplierName?: string;
+  paymentMethod?: string;
 }

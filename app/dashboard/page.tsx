@@ -13,6 +13,7 @@ import PageHeader from '../../components/ui/page-header';
 import Sparkline from '../../components/ui/sparkline';
 import Card, { CardHeader, CardTitle, CardContent } from '../../components/ui/card';
 import StatusBadge from '../../components/ui/status-badge';
+import { FinancialEntry } from '../../types';
 
 // Helper function to dynamically generate sparkline points from mock data dates
 function getSparklinePoints<T>(
@@ -68,7 +69,7 @@ export default function DashboardPage() {
   const {
     proposals, contracts, charges, onboardings,
     publications, tasks, historyEvents, clients,
-    currentOrganization, currentFeatures
+    currentOrganization, currentFeatures, financialEntries
   } = useTenantStore();
 
   if (!mounted) {
@@ -90,6 +91,64 @@ export default function DashboardPage() {
   const showTasks = currentFeatures ? currentFeatures.tasks !== false : true;
   const showHistory = currentFeatures ? currentFeatures.history !== false : true;
   const showTeam = currentFeatures ? currentFeatures.team !== false : true;
+  const showFinancial = currentFeatures ? currentFeatures.financial !== false : true;
+
+  // Financial calculations for dashboard summary
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  const currentYear = today.getFullYear();
+  const currentMonth = today.getMonth();
+
+  const isCurrentMonth = (dateStr?: string) => {
+    if (!dateStr) return false;
+    const d = new Date(dateStr);
+    return !isNaN(d.getTime()) && d.getFullYear() === currentYear && d.getMonth() === currentMonth;
+  };
+
+  const isOverdue = (entry: FinancialEntry) => {
+    if (entry.status === 'paid' || entry.status === 'cancelled') return false;
+    if (entry.status === 'overdue') return true;
+    const due = new Date(entry.dueDate);
+    return !isNaN(due.getTime()) && due < today;
+  };
+
+  const financeEntries = financialEntries || [];
+  const recs = financeEntries.filter((e: FinancialEntry) => e.type === 'receivable');
+  const pays = financeEntries.filter((e: FinancialEntry) => e.type === 'payable');
+
+  const dashAReceber = recs.reduce((sum: number, r: FinancialEntry) => {
+    if (r.status !== 'paid' && r.status !== 'cancelled') {
+      return sum + (r.amount - (r.paidAmount || 0));
+    }
+    return sum;
+  }, 0);
+
+  const dashAPagar = pays.reduce((sum: number, p: FinancialEntry) => {
+    if (p.status !== 'paid' && p.status !== 'cancelled') {
+      return sum + p.amount;
+    }
+    return sum;
+  }, 0);
+
+  const dashVencidos = financeEntries.reduce((sum: number, e: FinancialEntry) => {
+    if (isOverdue(e)) {
+      const outstanding = e.type === 'receivable' ? (e.amount - (e.paidAmount || 0)) : e.amount;
+      return sum + outstanding;
+    }
+    return sum;
+  }, 0);
+
+  const dashMonthReceivables = recs.reduce((sum: number, r: FinancialEntry) => {
+    if (r.status !== 'cancelled' && isCurrentMonth(r.dueDate)) return sum + r.amount;
+    return sum;
+  }, 0);
+
+  const dashMonthPayables = pays.reduce((sum: number, p: FinancialEntry) => {
+    if (p.status !== 'cancelled' && isCurrentMonth(p.dueDate)) return sum + p.amount;
+    return sum;
+  }, 0);
+
+  const dashResultadoPrevisto = dashMonthReceivables - dashMonthPayables;
 
   // Calculate Metrics (Keep filtered arrays to generate reactive sparklines)
   const propostasEnviadasItems = proposals.filter(p => p.status === 'sent' || p.status === 'viewed');
@@ -150,10 +209,12 @@ export default function DashboardPage() {
     (showContracts || showCharges),
     showOnboarding,
     showPublications,
-    showTasks
+    showTasks,
+    showFinancial
   ].filter(Boolean).length;
 
   const gridColsClass =
+    activeKpis === 6 ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6' :
     activeKpis === 5 ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5' :
     activeKpis === 4 ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4' :
     activeKpis === 3 ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3' :
@@ -162,7 +223,7 @@ export default function DashboardPage() {
   // Overall enabled count (excluding publicProposal since it's external)
   const enabledCount = [
     showLeads, showClients, showProposals, showContracts, showCharges,
-    showOnboarding, showPublications, showTasks, showHistory, showTeam
+    showOnboarding, showPublications, showTasks, showHistory, showTeam, showFinancial
   ].filter(Boolean).length;
 
   const hasLeftColumn = showTasks || showTeam;
@@ -385,6 +446,67 @@ export default function DashboardPage() {
                       <Sparkline points={getSparklinePoints(tarefasAtrasadasItems, t => t.createdAt)} variant="danger" className="w-16 sm:w-20 md:w-24" />
                       <span className="text-lg font-bold text-foreground">{tarefasAtrasadas}</span>
                     </div>
+                  </div>
+                </div>
+              </Card>
+            )}
+
+            {/* Resumo Financeiro do Novo Módulo */}
+            {showFinancial && (
+              <Card className="p-4 border-border/50 bg-card/40 backdrop-blur-sm">
+                <div className="flex items-center justify-between border-b border-border/30 pb-2 mb-3">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Resumo Financeiro (Mês)</span>
+                  <Link href="/financeiro" className="text-[10px] font-bold text-primary hover:underline flex items-center gap-0.5">
+                    Detalhes <ArrowRight className="h-3 w-3" />
+                  </Link>
+                </div>
+                <div className="space-y-3.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                        <span className="h-1.5 w-1.5 rounded-full bg-success" />
+                        <span className="font-medium">A Receber</span>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground block mt-0.5">Em aberto</span>
+                    </div>
+                    <span className="text-sm font-bold text-foreground">R$ {dashAReceber.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 border-t border-border/10 pt-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                        <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                        <span className="font-medium">A Pagar</span>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground block mt-0.5">Em aberto</span>
+                    </div>
+                    <span className="text-sm font-bold text-foreground">R$ {dashAPagar.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 border-t border-border/10 pt-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                        <span className="h-1.5 w-1.5 rounded-full bg-danger" />
+                        <span className="font-medium">Vencidos</span>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground block mt-0.5">Total atrasado</span>
+                    </div>
+                    <span className={`text-sm font-bold ${dashVencidos > 0 ? 'text-danger' : 'text-foreground'}`}>
+                      R$ {dashVencidos.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 border-t border-border/10 pt-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                        <span className="h-1.5 w-1.5 rounded-full bg-info" />
+                        <span className="font-medium">Resultado</span>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground block mt-0.5">Previsto do mês</span>
+                    </div>
+                    <span className={`text-sm font-bold ${dashResultadoPrevisto >= 0 ? 'text-success' : 'text-danger'}`}>
+                      R$ {dashResultadoPrevisto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    </span>
                   </div>
                 </div>
               </Card>

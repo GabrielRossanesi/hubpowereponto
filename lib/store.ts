@@ -11,7 +11,8 @@ import {
   HistoryEvent, TeamMember,
   Organization, PlanType, PlanLimits, UserRole,
   TenantIntegration, Lead, LeadStatus, LeadTemperature,
-  OrganizationFeatures
+  OrganizationFeatures,
+  FinancialEntry, FinancialRecurrence
 } from '../types';
 
 export const getPlanDefaultFeatures = (planId: PlanType): Omit<OrganizationFeatures, 'organizationId'> => {
@@ -29,7 +30,8 @@ export const getPlanDefaultFeatures = (planId: PlanType): Omit<OrganizationFeatu
         history: true,
         integrations: false,
         team: false,
-        publicProposal: true
+        publicProposal: true,
+        financial: true
       };
     case 'pro':
       return {
@@ -44,7 +46,8 @@ export const getPlanDefaultFeatures = (planId: PlanType): Omit<OrganizationFeatu
         history: true,
         integrations: true,
         team: true,
-        publicProposal: true
+        publicProposal: true,
+        financial: true
       };
     case 'enterprise':
     default:
@@ -60,7 +63,8 @@ export const getPlanDefaultFeatures = (planId: PlanType): Omit<OrganizationFeatu
         history: true,
         integrations: true,
         team: true,
-        publicProposal: true
+        publicProposal: true,
+        financial: true
       };
   }
 };
@@ -81,10 +85,20 @@ interface SystemState {
   integrations: TenantIntegration[];
   leads: Lead[];
   organizationFeatures: OrganizationFeatures[];
+  financialEntries: FinancialEntry[];
+  financialRecurrences: FinancialRecurrence[];
 
 
   // Actions
   setCurrentOrganizationId: (id: string) => void;
+  addFinancialEntry: (entry: Omit<FinancialEntry, 'id' | 'organizationId' | 'createdAt'>) => void;
+  updateFinancialEntry: (id: string, entry: Partial<FinancialEntry>) => void;
+  confirmFinancialPayment: (id: string, paidAmount?: number, paidAt?: string) => void;
+  cancelFinancialEntry: (id: string) => void;
+  addFinancialRecurrence: (recurrence: Omit<FinancialRecurrence, 'id' | 'organizationId' | 'isActive'>) => void;
+  updateFinancialRecurrence: (id: string, recurrence: Partial<FinancialRecurrence>) => void;
+  toggleFinancialRecurrence: (id: string) => void;
+  resetFinancialSandboxData: () => void;
   upgradePlan: (planId: PlanType, orgId?: string) => void;
   updateOrganizationStatus: (orgId: string, status: 'active' | 'suspended' | 'trial' | 'pending') => void;
   updateTeamMemberRole: (id: string, role: UserRole) => void;
@@ -275,6 +289,383 @@ const initialIntegrations: TenantIntegration[] = [
     metaAdsStatus: 'connected',
     googleAdsToken: 'google_ads_token_morales_229384',
     googleAdsStatus: 'connected'
+  }
+];
+
+// Helper functions for relative dates in mock data (avoids static outdated years/months)
+const getRelativeMonthDate = (dayOfMonth: number, monthOffset = 0) => {
+  const d = new Date();
+  d.setMonth(d.getMonth() + monthOffset);
+  // Cap day to month length
+  const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  const targetDay = Math.min(dayOfMonth, lastDay);
+  d.setDate(targetDay);
+  return d.toISOString().split('T')[0];
+};
+
+const initialFinancialEntries: FinancialEntry[] = [
+  // --- org_hub_power (Pro) ---
+  // Receivables (Entradas/A Receber)
+  {
+    id: 'fe_hp_r1',
+    organizationId: 'org_hub_power',
+    type: 'receivable',
+    title: 'Mensalidade - Tech Solutions',
+    description: 'Faturamento recorrente referente ao contrato de marketing digital',
+    amount: 12500,
+    paidAmount: 12500,
+    dueDate: getRelativeMonthDate(5, 0),
+    paidAt: getRelativeMonthDate(5, 0),
+    status: 'paid',
+    category: 'Contrato',
+    contactName: 'Tech Solutions',
+    paymentMethod: 'pix',
+    isRecurring: true,
+    recurrenceId: 'fr_hp_r1',
+    createdAt: getRelativeMonthDate(1, 0)
+  },
+  {
+    id: 'fe_hp_r2',
+    organizationId: 'org_hub_power',
+    type: 'receivable',
+    title: 'Consultoria SEO - Reis & Advogados',
+    description: 'Consultoria técnica de SEO on-page e auditoria semestral',
+    amount: 8200,
+    paidAmount: 8200,
+    dueDate: getRelativeMonthDate(12, 0),
+    paidAt: getRelativeMonthDate(11, 0),
+    status: 'paid',
+    category: 'Consultoria',
+    contactName: 'Reis & Advogados Associados',
+    paymentMethod: 'pix',
+    createdAt: getRelativeMonthDate(10, 0)
+  },
+  {
+    id: 'fe_hp_r3',
+    organizationId: 'org_hub_power',
+    type: 'receivable',
+    title: 'Desenvolvimento Web - Grupo Alfa',
+    description: 'Desenvolvimento da nova plataforma institucional',
+    amount: 15000,
+    dueDate: getRelativeMonthDate(25, 0),
+    status: 'pending',
+    category: 'Desenvolvimento',
+    contactName: 'Grupo Alfa Ltda',
+    paymentMethod: 'bank_transfer',
+    createdAt: getRelativeMonthDate(15, 0)
+  },
+  {
+    id: 'fe_hp_r4',
+    organizationId: 'org_hub_power',
+    type: 'receivable',
+    title: 'Branding Avançado - Innovate Co',
+    description: 'Entrega final da nova identidade visual e manual da marca',
+    amount: 4500,
+    dueDate: getRelativeMonthDate(25, -1), // Mês passado -> Vencido
+    status: 'overdue',
+    category: 'Design',
+    contactName: 'Innovate Co.',
+    paymentMethod: 'boleto',
+    createdAt: getRelativeMonthDate(25, -2)
+  },
+  {
+    id: 'fe_hp_r5',
+    organizationId: 'org_hub_power',
+    type: 'receivable',
+    title: 'Mentoria de Equipe - Startup X',
+    description: 'Sessões semanais de aceleração de lideranças operacionais',
+    amount: 6000,
+    paidAmount: 3000,
+    dueDate: getRelativeMonthDate(20, 0),
+    status: 'partial',
+    category: 'Consultoria',
+    contactName: 'Startup X Inc',
+    paymentMethod: 'pix',
+    createdAt: getRelativeMonthDate(1, 0)
+  },
+  {
+    id: 'fe_hp_r6',
+    organizationId: 'org_hub_power',
+    type: 'receivable',
+    title: 'Social Media Mockup - Beta Group',
+    description: 'Briefing cancelado pelo cliente no início do projeto',
+    amount: 2500,
+    dueDate: getRelativeMonthDate(5, -1),
+    status: 'cancelled',
+    category: 'Design',
+    contactName: 'Beta Group',
+    createdAt: getRelativeMonthDate(1, -1)
+  },
+  // Payables (Saídas/A Pagar)
+  {
+    id: 'fe_hp_p1',
+    organizationId: 'org_hub_power',
+    type: 'payable',
+    title: 'Aluguel Coworking - Headquarters',
+    description: 'Mensalidade das salas exclusivas da agência',
+    amount: 2500,
+    dueDate: getRelativeMonthDate(15, 0),
+    status: 'pending',
+    category: 'Infraestrutura',
+    contactName: 'Headquarters Coworking',
+    paymentMethod: 'pix',
+    isRecurring: true,
+    recurrenceId: 'fr_hp_p1',
+    createdAt: getRelativeMonthDate(1, 0)
+  },
+  {
+    id: 'fe_hp_p2',
+    organizationId: 'org_hub_power',
+    type: 'payable',
+    title: 'Licenças Figma Pro',
+    description: 'Assinatura anual das contas de design',
+    amount: 1200,
+    paidAmount: 1200,
+    dueDate: getRelativeMonthDate(1, 0),
+    paidAt: getRelativeMonthDate(1, 0),
+    status: 'paid',
+    category: 'Ferramentas',
+    contactName: 'Figma Inc.',
+    paymentMethod: 'credit_card',
+    isRecurring: true,
+    recurrenceId: 'fr_hp_p2',
+    createdAt: getRelativeMonthDate(1, 0)
+  },
+  {
+    id: 'fe_hp_p3',
+    organizationId: 'org_hub_power',
+    type: 'payable',
+    title: 'AWS Cloud Hosting',
+    description: 'Servidores de staging e produção dos sistemas de clientes',
+    amount: 950,
+    paidAmount: 950,
+    dueDate: getRelativeMonthDate(10, 0),
+    paidAt: getRelativeMonthDate(10, 0),
+    status: 'paid',
+    category: 'Infraestrutura',
+    contactName: 'Amazon Web Services',
+    paymentMethod: 'credit_card',
+    isRecurring: true,
+    recurrenceId: 'fr_hp_p3',
+    createdAt: getRelativeMonthDate(1, 0)
+  },
+  {
+    id: 'fe_hp_p4',
+    organizationId: 'org_hub_power',
+    type: 'payable',
+    title: 'Adobe Creative Suite',
+    description: 'Licenças Adobe Premiere e Illustrator',
+    amount: 350,
+    dueDate: getRelativeMonthDate(28, -1), // Mês passado -> Vencido
+    status: 'overdue',
+    category: 'Ferramentas',
+    contactName: 'Adobe Systems',
+    paymentMethod: 'credit_card',
+    createdAt: getRelativeMonthDate(28, -2)
+  },
+  {
+    id: 'fe_hp_p5',
+    organizationId: 'org_hub_power',
+    type: 'payable',
+    title: 'Contabilidade Mensal',
+    description: 'Escrituração contábil e obrigações fiscais da agência',
+    amount: 1500,
+    dueDate: getRelativeMonthDate(30, 0),
+    status: 'pending',
+    category: 'Contador',
+    contactName: 'Velasco Contadores Associados',
+    paymentMethod: 'bank_transfer',
+    isRecurring: true,
+    recurrenceId: 'fr_hp_p4',
+    createdAt: getRelativeMonthDate(1, 0)
+  },
+
+  // --- org_spark (Starter) ---
+  {
+    id: 'fe_sp_r1',
+    organizationId: 'org_spark',
+    type: 'receivable',
+    title: 'Mensalidade - Cliente Spark',
+    amount: 3000,
+    paidAmount: 3000,
+    dueDate: getRelativeMonthDate(10, 0),
+    paidAt: getRelativeMonthDate(10, 0),
+    status: 'paid',
+    category: 'Contrato',
+    contactName: 'Cliente Spark S/A',
+    paymentMethod: 'pix',
+    createdAt: getRelativeMonthDate(1, 0)
+  },
+  {
+    id: 'fe_sp_r2',
+    organizationId: 'org_spark',
+    type: 'receivable',
+    title: 'Edição de Vídeo Avulsa',
+    amount: 1500,
+    dueDate: getRelativeMonthDate(28, 0),
+    status: 'pending',
+    category: 'Serviço',
+    contactName: 'Canal Criativo',
+    paymentMethod: 'pix',
+    createdAt: getRelativeMonthDate(10, 0)
+  },
+  {
+    id: 'fe_sp_p1',
+    organizationId: 'org_spark',
+    type: 'payable',
+    title: 'Assinatura Notion',
+    amount: 150,
+    paidAmount: 150,
+    dueDate: getRelativeMonthDate(5, 0),
+    paidAt: getRelativeMonthDate(5, 0),
+    status: 'paid',
+    category: 'Ferramentas',
+    contactName: 'Notion Labs',
+    paymentMethod: 'credit_card',
+    createdAt: getRelativeMonthDate(1, 0)
+  },
+  {
+    id: 'fe_sp_p2',
+    organizationId: 'org_spark',
+    type: 'payable',
+    title: 'Designer Freelancer',
+    amount: 400,
+    dueDate: getRelativeMonthDate(20, 0),
+    status: 'pending',
+    category: 'Freelancer',
+    contactName: 'Pedro Designer',
+    paymentMethod: 'pix',
+    createdAt: getRelativeMonthDate(15, 0)
+  },
+
+  // --- org_morales (Enterprise) ---
+  {
+    id: 'fe_mo_r1',
+    organizationId: 'org_morales',
+    type: 'receivable',
+    title: 'Contrato Anual Corporativo',
+    amount: 45000,
+    paidAmount: 45000,
+    dueDate: getRelativeMonthDate(1, 0),
+    paidAt: getRelativeMonthDate(1, 0),
+    status: 'paid',
+    category: 'Contrato',
+    contactName: 'Indústrias Morales',
+    paymentMethod: 'bank_transfer',
+    createdAt: getRelativeMonthDate(1, 0)
+  },
+  {
+    id: 'fe_mo_r2',
+    organizationId: 'org_morales',
+    type: 'receivable',
+    title: 'Auditoria de Processos',
+    amount: 22000,
+    dueDate: getRelativeMonthDate(25, 0),
+    status: 'pending',
+    category: 'Consultoria',
+    contactName: 'Morales Consultores',
+    paymentMethod: 'bank_transfer',
+    createdAt: getRelativeMonthDate(10, 0)
+  },
+  {
+    id: 'fe_mo_p1',
+    organizationId: 'org_morales',
+    type: 'payable',
+    title: 'Folha de Pagamento - Equipe',
+    amount: 12000,
+    dueDate: getRelativeMonthDate(5, 0),
+    status: 'pending',
+    category: 'Salários',
+    contactName: 'Colaboradores Morales',
+    paymentMethod: 'bank_transfer',
+    createdAt: getRelativeMonthDate(1, 0)
+  }
+];
+
+const initialFinancialRecurrences: FinancialRecurrence[] = [
+  // --- org_hub_power ---
+  {
+    id: 'fr_hp_r1',
+    organizationId: 'org_hub_power',
+    type: 'receivable',
+    title: 'Mensalidade - Tech Solutions',
+    amount: 12500,
+    category: 'Contrato',
+    frequency: 'monthly',
+    startDate: getRelativeMonthDate(1, -2),
+    nextDueDate: getRelativeMonthDate(5, 1),
+    isActive: true,
+    clientId: 'c_h1',
+    paymentMethod: 'pix'
+  },
+  {
+    id: 'fr_hp_r2',
+    organizationId: 'org_hub_power',
+    type: 'receivable',
+    title: 'Assessoria Mensal - Innovate Co',
+    amount: 3500,
+    category: 'Contrato',
+    frequency: 'monthly',
+    startDate: getRelativeMonthDate(10, -1),
+    nextDueDate: getRelativeMonthDate(10, 1),
+    isActive: true,
+    paymentMethod: 'pix'
+  },
+  {
+    id: 'fr_hp_p1',
+    organizationId: 'org_hub_power',
+    type: 'payable',
+    title: 'Aluguel Coworking',
+    amount: 2500,
+    category: 'Infraestrutura',
+    frequency: 'monthly',
+    startDate: getRelativeMonthDate(15, -6),
+    nextDueDate: getRelativeMonthDate(15, 1),
+    isActive: true,
+    supplierName: 'Headquarters Coworking',
+    paymentMethod: 'pix'
+  },
+  {
+    id: 'fr_hp_p2',
+    organizationId: 'org_hub_power',
+    type: 'payable',
+    title: 'Licenças Figma Pro',
+    amount: 1200,
+    category: 'Ferramentas',
+    frequency: 'monthly',
+    startDate: getRelativeMonthDate(1, -3),
+    nextDueDate: getRelativeMonthDate(1, 1),
+    isActive: true,
+    supplierName: 'Figma Inc.',
+    paymentMethod: 'credit_card'
+  },
+  {
+    id: 'fr_hp_p3',
+    organizationId: 'org_hub_power',
+    type: 'payable',
+    title: 'AWS Cloud Hosting',
+    amount: 950,
+    category: 'Infraestrutura',
+    frequency: 'monthly',
+    startDate: getRelativeMonthDate(10, -6),
+    nextDueDate: getRelativeMonthDate(10, 1),
+    isActive: true,
+    supplierName: 'Amazon Web Services',
+    paymentMethod: 'credit_card'
+  },
+  {
+    id: 'fr_hp_p4',
+    organizationId: 'org_hub_power',
+    type: 'payable',
+    title: 'Contabilidade Mensal',
+    amount: 1500,
+    category: 'Contador',
+    frequency: 'monthly',
+    startDate: getRelativeMonthDate(30, -12),
+    nextDueDate: getRelativeMonthDate(30, 1),
+    isActive: true,
+    supplierName: 'Velasco Contadores Associados',
+    paymentMethod: 'bank_transfer'
   }
 ];
 
@@ -1322,6 +1713,8 @@ export const useStore = create<SystemState>()(
       integrations: initialIntegrations,
       leads: initialLeads,
       organizationFeatures: initialFeatures,
+      financialEntries: initialFinancialEntries,
+      financialRecurrences: initialFinancialRecurrences,
       activeSetupClientId: null,
       activeSetupStep: 'none',
       isSetupDismissed: false,
@@ -1335,6 +1728,165 @@ export const useStore = create<SystemState>()(
         const orgMembers = get().teamMembers.filter(m => m.organizationId === id);
         const nextUser = orgMembers[0] || initialTeamMembers[0];
         set({ currentOrganizationId: id, currentUser: nextUser });
+      },
+
+      addFinancialEntry: (entry) => {
+        const orgId = get().currentOrganizationId;
+        const newEntry: FinancialEntry = {
+          ...entry,
+          id: 'fe_' + Math.random().toString(36).substring(2, 11),
+          organizationId: orgId,
+          createdAt: new Date().toISOString(),
+        };
+        set((state) => ({
+          financialEntries: [newEntry, ...state.financialEntries],
+        }));
+
+        get().addHistoryEvent({
+          title: newEntry.type === 'receivable' ? 'Recebível Criado' : 'Conta a Pagar Criada',
+          description: `${newEntry.title} - R$ ${newEntry.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} lançado em ${newEntry.category}.`,
+          type: 'proposal_created',
+          organizationId: orgId
+        });
+      },
+
+      updateFinancialEntry: (id, entry) => {
+        const orgId = get().currentOrganizationId;
+        set((state) => ({
+          financialEntries: state.financialEntries.map((fe) => {
+            if (fe.id === id && fe.organizationId === orgId) {
+              return { ...fe, ...entry, updatedAt: new Date().toISOString() };
+            }
+            return fe;
+          }),
+        }));
+      },
+
+      confirmFinancialPayment: (id, paidAmount, paidAt) => {
+        const orgId = get().currentOrganizationId;
+        const entry = get().financialEntries.find((fe) => fe.id === id && fe.organizationId === orgId);
+        if (!entry) return;
+
+        const actualPaidAmount = paidAmount !== undefined ? paidAmount : entry.amount;
+        const actualPaidAt = paidAt || new Date().toISOString();
+        const isPartial = actualPaidAmount < entry.amount;
+        const newStatus = isPartial ? 'partial' : 'paid';
+
+        set((state) => ({
+          financialEntries: state.financialEntries.map((fe) => {
+            if (fe.id === id && fe.organizationId === orgId) {
+              return {
+                ...fe,
+                status: newStatus,
+                paidAmount: actualPaidAmount,
+                paidAt: actualPaidAt,
+                updatedAt: new Date().toISOString(),
+              };
+            }
+            return fe;
+          }),
+        }));
+
+        get().addHistoryEvent({
+          title: entry.type === 'receivable' ? 'Recebimento Confirmado' : 'Pagamento Confirmado',
+          description: `${entry.type === 'receivable' ? 'Recebido' : 'Pago'}: ${entry.title} - R$ ${actualPaidAmount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}${isPartial ? ' (Parcial)' : ''}.`,
+          type: 'charge_paid',
+          organizationId: orgId,
+        });
+      },
+
+      cancelFinancialEntry: (id) => {
+        const orgId = get().currentOrganizationId;
+        const entry = get().financialEntries.find((fe) => fe.id === id && fe.organizationId === orgId);
+        if (!entry) return;
+
+        set((state) => ({
+          financialEntries: state.financialEntries.map((fe) => {
+            if (fe.id === id && fe.organizationId === orgId) {
+              return {
+                ...fe,
+                status: 'cancelled',
+                updatedAt: new Date().toISOString(),
+              };
+            }
+            return fe;
+          }),
+        }));
+
+        get().addHistoryEvent({
+          title: entry.type === 'receivable' ? 'Recebível Cancelado' : 'Conta a Pagar Cancelada',
+          description: `Cancelado: ${entry.title} no valor de R$ ${entry.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}.`,
+          type: 'task_completed',
+          organizationId: orgId,
+        });
+      },
+
+      addFinancialRecurrence: (recurrence) => {
+        const orgId = get().currentOrganizationId;
+        const newRec: FinancialRecurrence = {
+          ...recurrence,
+          id: 'fr_' + Math.random().toString(36).substring(2, 11),
+          organizationId: orgId,
+          isActive: true,
+        };
+        set((state) => ({
+          financialRecurrences: [newRec, ...state.financialRecurrences],
+        }));
+
+        get().addHistoryEvent({
+          title: 'Recorrência Cadastrada',
+          description: `Recorrência de ${newRec.type === 'receivable' ? 'receita' : 'despesa'} criada: ${newRec.title} - R$ ${newRec.amount.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} (${newRec.frequency}).`,
+          type: 'proposal_created',
+          organizationId: orgId,
+        });
+      },
+
+      updateFinancialRecurrence: (id, recurrence) => {
+        const orgId = get().currentOrganizationId;
+        set((state) => ({
+          financialRecurrences: state.financialRecurrences.map((fr) => {
+            if (fr.id === id && fr.organizationId === orgId) {
+              return { ...fr, ...recurrence };
+            }
+            return fr;
+          }),
+        }));
+      },
+
+      toggleFinancialRecurrence: (id) => {
+        const orgId = get().currentOrganizationId;
+        set((state) => ({
+          financialRecurrences: state.financialRecurrences.map((fr) => {
+            if (fr.id === id && fr.organizationId === orgId) {
+              return { ...fr, isActive: !fr.isActive };
+            }
+            return fr;
+          }),
+        }));
+      },
+
+      resetFinancialSandboxData: () => {
+        const orgId = get().currentOrganizationId;
+        const defaultEntriesForOrg = initialFinancialEntries.filter((fe) => fe.organizationId === orgId);
+        const defaultRecsForOrg = initialFinancialRecurrences.filter((fr) => fr.organizationId === orgId);
+
+        set((state) => ({
+          financialEntries: [
+            ...state.financialEntries.filter((fe) => fe.organizationId !== orgId),
+            ...defaultEntriesForOrg,
+          ],
+          financialRecurrences: [
+            ...state.financialRecurrences.filter((fr) => fr.organizationId !== orgId),
+            ...defaultRecsForOrg,
+          ],
+        }));
+
+        get().addHistoryEvent({
+          title: 'Dados Financeiros Reiniciados',
+          description: 'A base de lançamentos e recorrências financeiras simuladas foi reiniciada para os padrões originais do sandbox.',
+          type: 'task_completed',
+          organizationId: orgId,
+        });
       },
 
       upgradePlan: (planId, orgId) => {
@@ -2849,5 +3401,7 @@ export function useTenantStore() {
     historyEvents: store.historyEvents.filter(h => h.organizationId === currentOrgId),
     teamMembers: store.teamMembers.filter(m => m.organizationId === currentOrgId),
     leads: store.leads.filter(l => l.organizationId === currentOrgId),
+    financialEntries: store.financialEntries.filter(f => f.organizationId === currentOrgId),
+    financialRecurrences: store.financialRecurrences.filter(f => f.organizationId === currentOrgId),
   };
 }

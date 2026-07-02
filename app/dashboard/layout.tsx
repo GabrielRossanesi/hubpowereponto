@@ -49,6 +49,7 @@ export default function DashboardLayout({
     '/publicacoes': 'publications',
     '/tarefas': 'tasks',
     '/historico': 'history',
+    '/financeiro': 'financial',
   };
 
   const matchedRoute = Object.keys(routeFeatureMap).find(route => pathname && pathname.startsWith(route));

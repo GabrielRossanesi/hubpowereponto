@@ -6,7 +6,8 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard, Users, FileText, Briefcase,
   CreditCard, UserPlus, Megaphone, CheckSquare,
-  History, Settings, X, Building2, Target, ChevronLeft, ChevronRight
+  History, Settings, X, Building2, Target, ChevronLeft, ChevronRight,
+  Landmark
 } from 'lucide-react';
 import Button from '../ui/button';
 import { useTenantStore, getPlanDefaultFeatures } from '../../lib/store';
@@ -44,6 +45,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
         { label: 'Propostas', href: '/propostas', icon: FileText, feature: 'proposals' },
         { label: 'Contratos', href: '/contratos', icon: Briefcase, feature: 'contracts' },
         { label: 'Cobranças', href: '/cobrancas', icon: CreditCard, feature: 'charges' },
+        { label: 'Financeiro', href: '/financeiro', icon: Landmark, feature: 'financial' },
       ]
     },
     {
