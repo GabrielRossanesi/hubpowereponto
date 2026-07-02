@@ -8,30 +8,53 @@ import Input from '../../components/ui/input';
 import Card from '../../components/ui/card';
 import { PLATFORM_DESCRIPTION } from '../../lib/config';
 import { LogoIcon } from '../../components/ui/logo';
+import { signIn } from '../../lib/auth-client';
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState('ana.silva@powerponto.com.br');
-  const [password, setPassword] = useState('power123');
+
+  const isDatabaseMode = process.env.NEXT_PUBLIC_DATA_MODE === 'database';
+
+  const [email, setEmail] = useState(isDatabaseMode ? '' : 'ana.silva@powerponto.com.br');
+  const [password, setPassword] = useState(isDatabaseMode ? '' : 'power123');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setError('');
 
-    // Simulate authenticating
-    setTimeout(() => {
-      if (email && password) {
-        setIsLoading(false);
-        router.push('/dashboard');
-      } else {
-        setIsLoading(false);
-        setError('Preencha os campos de login para continuar.');
-      }
-    }, 1200);
+    if (isDatabaseMode) {
+      await signIn.email({
+        email,
+        password,
+      }, {
+        onRequest: () => {
+          setIsLoading(true);
+        },
+        onSuccess: () => {
+          setIsLoading(false);
+          router.push('/dashboard');
+        },
+        onError: (ctx) => {
+          setError(ctx.error.message || 'Credenciais inválidas ou erro de rede.');
+          setIsLoading(false);
+        }
+      });
+    } else {
+      // Simulate authenticating for sandbox
+      setTimeout(() => {
+        if (email && password) {
+          setIsLoading(false);
+          router.push('/dashboard');
+        } else {
+          setIsLoading(false);
+          setError('Preencha os campos de login para continuar.');
+        }
+      }, 1200);
+    }
   };
 
   return (
@@ -58,8 +81,14 @@ export default function LoginPage() {
         <Card className="p-8 border border-border/40 shadow-2xl bg-card/60 backdrop-blur-md">
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1">
-              <h2 className="text-base font-semibold text-foreground">Ambiente Demonstrativo</h2>
-              <p className="text-xs text-muted-foreground">Use as credenciais abaixo para acessar a demo da NV Hub.</p>
+              <h2 className="text-base font-semibold text-foreground">
+                {isDatabaseMode ? 'Acesso Restrito' : 'Ambiente Demonstrativo'}
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                {isDatabaseMode 
+                  ? 'Acesso restrito a empresas cadastradas pela NV Hub.' 
+                  : 'Use as credenciais abaixo para acessar a demo da NV Hub.'}
+              </p>
             </div>
 
             {error && (
@@ -73,7 +102,7 @@ export default function LoginPage() {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="seu.nome@powerponto.com"
+              placeholder="seu.nome@empresa.com"
               required
             />
 
@@ -102,15 +131,17 @@ export default function LoginPage() {
         </Card>
 
         {/* Guest Credentials Indicator */}
-        <div className="p-4 bg-muted/30 border border-border/50 rounded-xl text-center flex items-center justify-center gap-3">
-          <ShieldCheck className="h-5 w-5 text-primary shrink-0" />
-          <div className="text-left text-[11px] text-muted-foreground">
-            <span className="font-semibold block text-foreground">Credenciais de Acesso à Demo:</span>
-            Email: <code className="text-primary select-all">ana.silva@powerponto.com.br</code>
-            <br />
-            Senha: <code className="text-primary select-all">power123</code>
+        {!isDatabaseMode && (
+          <div className="p-4 bg-muted/30 border border-border/50 rounded-xl text-center flex items-center justify-center gap-3">
+            <ShieldCheck className="h-5 w-5 text-primary shrink-0" />
+            <div className="text-left text-[11px] text-muted-foreground">
+              <span className="font-semibold block text-foreground">Credenciais de Acesso à Demo:</span>
+              Email: <code className="text-primary select-all">ana.silva@powerponto.com.br</code>
+              <br />
+              Senha: <code className="text-primary select-all">power123</code>
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

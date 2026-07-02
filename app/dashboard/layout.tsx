@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Lock } from 'lucide-react';
 import Sidebar from '../../components/layout/sidebar';
@@ -9,17 +9,28 @@ import Topbar from '../../components/layout/topbar';
 import { useTenantStore } from '../../lib/store';
 import { useMounted } from '../../hooks/useMounted';
 import Button from '../../components/ui/button';
+import { useSession } from '../../lib/auth-client';
 
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const pathname = usePathname();
   const { currentFeatures } = useTenantStore();
   const [backgroundOffset, setBackgroundOffset] = useState({ x: 0, y: 0 });
   const hasMounted = useMounted();
+
+  const isDatabaseMode = process.env.NEXT_PUBLIC_DATA_MODE === 'database';
+  const { data: session, isPending } = useSession();
+
+  useEffect(() => {
+    if (isDatabaseMode && !isPending && !session) {
+      router.push('/login');
+    }
+  }, [isDatabaseMode, isPending, session, router]);
 
   // Handle subtle mousemove parallax for premium background depth
   useEffect(() => {
@@ -59,6 +70,14 @@ export default function DashboardLayout({
     if (currentFeatures[featureKey] === false) {
       isBlocked = true;
     }
+  }
+
+  if (isDatabaseMode && (isPending || !session)) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-background">
+        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-primary" />
+      </div>
+    );
   }
 
   return (

@@ -1,7 +1,15 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import {
+  getOperatorAccessState,
+  getRealOrganizations,
+  createRealOrganization,
+  updateRealOrganization,
+  resetUserPasswordInDatabase
+} from './actions';
+import { useSession } from '../../lib/auth-client';
 import {
   Building2, Users, DollarSign, ShieldAlert, Sparkles,
   Activity, Calendar, Settings, Play, Lock,
@@ -10,7 +18,7 @@ import {
 } from 'lucide-react';
 import { useStore, getPlanDefaultFeatures } from '../../lib/store';
 import { useMounted } from '../../hooks/useMounted';
-import { UserRole, OrganizationFeatures } from '../../types';
+import { UserRole, OrganizationFeatures, Organization } from '../../types';
 import { PageHeader as UIHeader } from '../../components/ui/page-header';
 import Button from '../../components/ui/button';
 import Card, { CardContent, CardHeader, CardTitle, CardDescription } from '../../components/ui/card';
@@ -24,6 +32,46 @@ import Textarea from '../../components/ui/textarea';
 export default function EmpresasAdminPage() {
   const mounted = useMounted();
   const router = useRouter();
+
+  const isDatabaseMode = process.env.NEXT_PUBLIC_DATA_MODE === 'database';
+  useSession(); // Hook registration to trigger session logic
+
+  const [realOrgs, setRealOrgs] = useState<(Organization & {
+    slug: string;
+    users?: {
+      id: string;
+      name: string;
+      email: string;
+      role: 'owner' | 'admin' | 'member' | 'viewer';
+      status: 'active';
+      joinedAt: string;
+    }[];
+    features?: Omit<OrganizationFeatures, 'organizationId'>;
+  })[]>([]);
+  const [isOp, setIsOp] = useState<boolean | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const loadRealData = useCallback(async () => {
+    try {
+      const orgs = await getRealOrganizations();
+      setRealOrgs(orgs as typeof realOrgs);
+    } catch (err) {
+      console.error('Erro ao buscar empresas reais:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isDatabaseMode) {
+      const checkOperatorAndLoad = async () => {
+        const state = await getOperatorAccessState();
+        setIsOp(state.isOperator);
+        if (state.isOperator) {
+          await loadRealData();
+        }
+      };
+      checkOperatorAndLoad();
+    }
+  }, [isDatabaseMode, loadRealData]);
 
   const {
     organizations,
@@ -93,22 +141,56 @@ export default function EmpresasAdminPage() {
     );
   }
 
+  if (isDatabaseMode && isOp === false) {
+    return (
+      <div className="min-h-[60vh] flex flex-col items-center justify-center text-center p-6 max-w-md mx-auto">
+        <div className="h-16 w-16 rounded-full bg-danger/10 text-danger flex items-center justify-center mb-6 ring-8 ring-danger/5">
+          <ShieldAlert className="h-8 w-8 animate-pulse" />
+        </div>
+        <h1 className="text-xl font-bold text-foreground mb-3 tracking-tight">
+          Acesso Restrito
+        </h1>
+        <p className="text-sm text-muted-foreground leading-relaxed mb-8">
+          Apenas usuários operadores ou administradores da plataforma possuem acesso a esta página no modo banco de dados.
+        </p>
+        <Button onClick={() => router.push('/dashboard')} className="w-full">
+          Voltar ao Dashboard
+        </Button>
+      </div>
+    );
+  }
+
+  const activeOrgsList = isDatabaseMode ? realOrgs : organizations;
+
   // Aggregate stats
-  const totalOrgs = organizations.length;
-  const activeOrgs = organizations.filter(o => o.status === 'active').length;
-  const trialOrgs = organizations.filter(o => o.status === 'trial').length;
-  const suspendedOrgs = organizations.filter(o => o.status === 'suspended').length;
+  const totalOrgs = activeOrgsList.length;
+  const activeOrgs = activeOrgsList.filter(o => o.status === 'active').length;
+  const trialOrgs = activeOrgsList.filter(o => o.status === 'trial').length;
+  const suspendedOrgs = activeOrgsList.filter(o => o.status === 'suspended').length;
 
   const planPrices = { starter: 199, pro: 499, enterprise: 1499 };
-  const monthlyRevenue = organizations
+  const monthlyRevenue = activeOrgsList
     .filter(o => o.status === 'active')
     .reduce((acc, org) => acc + planPrices[org.planId], 0);
 
-  const totalUsers = teamMembers.length;
-  const totalClients = clients.length;
-  const totalProposals = proposals.length;
+  const totalUsers = isDatabaseMode
+    ? (activeOrgsList as typeof realOrgs).reduce((acc, org) => acc + (org.users?.length || 0), 0)
+    : teamMembers.length;
+  const totalClients = isDatabaseMode ? 0 : clients.length;
+  const totalProposals = isDatabaseMode ? 0 : proposals.length;
 
-  const selectedOrg = organizations.find(o => o.id === selectedOrgId);
+  const selectedOrg = activeOrgsList.find(o => o.id === selectedOrgId) as (Organization & {
+    slug?: string;
+    users?: {
+      id: string;
+      name: string;
+      email: string;
+      role: 'owner' | 'admin' | 'member' | 'viewer';
+      status: 'active';
+      joinedAt: string;
+    }[];
+    features?: Omit<OrganizationFeatures, 'organizationId'>;
+  }) | undefined;
 
   // Helper for plan limits
   const getOrgLimits = (planId: 'starter' | 'pro' | 'enterprise') => {
@@ -162,19 +244,137 @@ export default function EmpresasAdminPage() {
     showModalFeedback(`Convite enviado com sucesso para ${userName} (${email})!`);
   };
 
-  const handleUpgradePlan = (plan: 'starter' | 'pro' | 'enterprise', orgId: string) => {
-    upgradePlan(plan, orgId);
-    showModalFeedback(`Plano atualizado com sucesso para ${plan.toUpperCase()}!`);
+  const handleUpgradePlan = async (plan: 'starter' | 'pro' | 'enterprise', orgId: string) => {
+    if (isDatabaseMode) {
+      try {
+        const org = realOrgs.find(o => o.id === orgId);
+        if (!org) return;
+        await updateRealOrganization(
+          orgId,
+          {
+            name: org.name,
+            slug: org.slug,
+            planId: plan,
+            isActive: org.status === 'active'
+          },
+          org.features || getPlanDefaultFeatures(plan)
+        );
+        await loadRealData();
+        showModalFeedback(`Plano atualizado com sucesso para ${plan.toUpperCase()}!`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Erro ao atualizar plano.';
+        alert(message);
+      }
+    } else {
+      upgradePlan(plan, orgId);
+      showModalFeedback(`Plano atualizado com sucesso para ${plan.toUpperCase()}!`);
+    }
   };
 
-  const handleUpdateStatus = (orgId: string, status: 'active' | 'suspended' | 'trial' | 'pending') => {
-    updateOrganizationStatus(orgId, status);
-    const statusText =
-      status === 'active' ? 'Reativada' :
-      status === 'trial' ? 'colocada em Trial' :
-      status === 'pending' ? 'marcada como Pendente' :
-      'Suspensa';
-    showModalFeedback(`Conta da organização foi ${statusText} com sucesso!`);
+  const handleUpdateStatus = async (orgId: string, status: 'active' | 'suspended' | 'trial' | 'pending') => {
+    if (isDatabaseMode) {
+      try {
+        const org = realOrgs.find(o => o.id === orgId);
+        if (!org) return;
+        await updateRealOrganization(
+          orgId,
+          {
+            name: org.name,
+            slug: org.slug,
+            planId: org.planId,
+            isActive: status === 'active'
+          },
+          org.features || getPlanDefaultFeatures(org.planId)
+        );
+        await loadRealData();
+        const statusText = status === 'active' ? 'Reativada' : 'Suspensa';
+        showModalFeedback(`Conta da organização foi ${statusText} com sucesso!`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Erro ao atualizar status.';
+        alert(message);
+      }
+    } else {
+      updateOrganizationStatus(orgId, status);
+      const statusText =
+        status === 'active' ? 'Reativada' :
+        status === 'trial' ? 'colocada em Trial' :
+        status === 'pending' ? 'marcada como Pendente' :
+        'Suspensa';
+      showModalFeedback(`Conta da organização foi ${statusText} com sucesso!`);
+    }
+  };
+
+  const handleResetFeatures = async (orgId: string, planId: 'starter' | 'pro' | 'enterprise') => {
+    if (isDatabaseMode) {
+      try {
+        const org = realOrgs.find(o => o.id === orgId);
+        if (!org) return;
+        const defaults = getPlanDefaultFeatures(planId);
+        await updateRealOrganization(
+          orgId,
+          {
+            name: org.name,
+            slug: org.slug,
+            planId: org.planId,
+            isActive: org.status === 'active'
+          },
+          defaults
+        );
+        await loadRealData();
+        showModalFeedback(`Configurações de funcionalidades resetadas para o padrão do plano ${planId.toUpperCase()}!`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Erro ao resetar funcionalidades.';
+        alert(message);
+      }
+    } else {
+      resetFeaturesToPlanDefaults(orgId);
+      showModalFeedback(`Configurações de funcionalidades resetadas para o padrão do plano ${planId.toUpperCase()}!`);
+    }
+  };
+
+  const handleToggleFeature = async (orgId: string, featureKey: keyof Omit<OrganizationFeatures, 'organizationId'>, value: boolean) => {
+    if (isDatabaseMode) {
+      try {
+        const org = realOrgs.find(o => o.id === orgId);
+        if (!org) return;
+        const updatedFeatures = {
+          ...(org.features || getPlanDefaultFeatures(org.planId)),
+          [featureKey]: value
+        };
+        await updateRealOrganization(
+          orgId,
+          {
+            name: org.name,
+            slug: org.slug,
+            planId: org.planId,
+            isActive: org.status === 'active'
+          },
+          updatedFeatures
+        );
+        await loadRealData();
+        showModalFeedback(`Módulo atualizado com sucesso!`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Erro ao alternar módulo.';
+        alert(message);
+      }
+    } else {
+      updateOrganizationFeature(orgId, featureKey, value);
+      showModalFeedback(`Módulo atualizado com sucesso!`);
+    }
+  };
+
+  const handleResetUserPassword = async (userId: string, email: string) => {
+    if (!window.confirm(`Deseja resetar a senha de ${email}? Uma nova senha temporária aleatória será gerada e exibida.`)) {
+      return;
+    }
+    const generatedPassword = Math.random().toString(36).substring(2, 10) + 'A1!';
+    try {
+      await resetUserPasswordInDatabase(userId, generatedPassword);
+      showModalFeedback(`Senha de ${email} resetada! Nova senha temporária: ${generatedPassword}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao resetar senha.';
+      alert(message);
+    }
   };
 
   const handleNextFromStep1 = () => {
@@ -189,20 +389,22 @@ export default function EmpresasAdminPage() {
     }
 
     // Check unique company name
-    const nameConflict = organizations.some(
+    const nameConflict = activeOrgsList.some(
       (org) => org.name.toLowerCase().trim() === companyName.toLowerCase().trim()
     );
     if (nameConflict) {
       errors.companyName = 'Uma empresa com este nome já está cadastrada';
     }
 
-    // Check unique CNPJ
-    const cleanCnpjStr = (val: string) => val.replace(/\D/g, '');
-    const cnpjConflict = organizations.some(
-      (org) => cleanCnpjStr(org.cnpj) === cleanCnpjStr(companyCnpj)
-    );
-    if (cnpjConflict) {
-      errors.companyCnpj = 'Uma empresa com este CNPJ já está cadastrada';
+    // Check unique CNPJ (only in sandbox mode)
+    if (!isDatabaseMode) {
+      const cleanCnpjStr = (val: string) => val.replace(/\D/g, '');
+      const cnpjConflict = organizations.some(
+        (org) => cleanCnpjStr(org.cnpj) === cleanCnpjStr(companyCnpj)
+      );
+      if (cnpjConflict) {
+        errors.companyCnpj = 'Uma empresa com este CNPJ já está cadastrada';
+      }
     }
 
     if (Object.keys(errors).length > 0) {
@@ -237,29 +439,75 @@ export default function EmpresasAdminPage() {
     setCreateStep(5);
   };
 
-  const handleCreateCompanySubmit = () => {
-    createOrganization({
-      name: companyName,
-      cnpj: companyCnpj,
-      email: companyEmail,
-      phone: companyPhone,
-      segment: companySegment,
-      cityUf: companyCityUf,
-      responsibleName: companyResponsible,
-      responsibleEmail: companyResponsibleEmail,
-      planId: companyPlan,
-      status: companyStatus,
-      notes: companyNotes,
-      features,
-      ownerUser: {
-        name: userName,
-        email: userEmail,
-        role: userRole,
-        userRole: userPermissionRole,
-        status: userStatus
-      },
-      createMockData
-    });
+  const handleCreateCompanySubmit = async () => {
+    if (isDatabaseMode) {
+      setIsSubmitting(true);
+      try {
+        const orgPayload = {
+          name: companyName,
+          slug: companyName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''),
+          planId: companyPlan,
+          isActive: companyStatus === 'active',
+          features: {
+            leads: features.leads,
+            clients: features.clients,
+            proposals: features.proposals,
+            contracts: features.contracts,
+            charges: features.charges,
+            onboarding: features.onboarding,
+            publications: features.publications,
+            tasks: features.tasks,
+            history: features.history,
+            team: features.team,
+            financial: features.financial
+          }
+        };
+
+        const generatedPassword = Math.random().toString(36).substring(2, 10) + 'A1!';
+
+        const userPayload = {
+          name: userName,
+          email: userEmail,
+          passwordRaw: generatedPassword,
+          role: userPermissionRole
+        };
+
+        const result = await createRealOrganization(orgPayload, userPayload);
+        if (result.success) {
+          showModalFeedback(
+            `Empresa criada com sucesso! Email Admin: ${userEmail} | Senha temporária: ${generatedPassword}`
+          );
+          await loadRealData();
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Erro ao criar organização.';
+        alert(message);
+      }
+    } else {
+      createOrganization({
+        name: companyName,
+        cnpj: companyCnpj,
+        email: companyEmail,
+        phone: companyPhone,
+        segment: companySegment,
+        cityUf: companyCityUf,
+        responsibleName: companyResponsible,
+        responsibleEmail: companyResponsibleEmail,
+        planId: companyPlan,
+        status: companyStatus,
+        notes: companyNotes,
+        features,
+        ownerUser: {
+          name: userName,
+          email: userEmail,
+          role: userRole,
+          userRole: userPermissionRole,
+          status: userStatus
+        },
+        createMockData
+      });
+      showModalFeedback('Empresa cadastrada com sucesso!');
+    }
 
     // Reset forms
     setIsCreateModalOpen(false);
@@ -283,8 +531,6 @@ export default function EmpresasAdminPage() {
     setUserStatus('active');
     setCreateMockData(true);
     setValidationErrors({});
-
-    showModalFeedback('Empresa cadastrada com sucesso!');
   };
 
   return (
@@ -398,38 +644,39 @@ export default function EmpresasAdminPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {organizations.map((org) => {
-                  const orgUsers = teamMembers.filter(m => m.organizationId === org.id).length;
-                  const orgClients = clients.filter(c => c.organizationId === org.id).length;
-                  const orgProposals = proposals.filter(p => p.organizationId === org.id).length;
-                  const orgTasks = tasks.filter(t => t.organizationId === org.id).length;
-                  const limits = getOrgLimits(org.planId);
+                {activeOrgsList.map((org) => {
+                  const o = org as typeof realOrgs[number];
+                  const orgUsers = isDatabaseMode ? (o.users?.length || 0) : teamMembers.filter(m => m.organizationId === o.id).length;
+                  const orgClients = isDatabaseMode ? 0 : clients.filter(c => c.organizationId === o.id).length;
+                  const orgProposals = isDatabaseMode ? 0 : proposals.filter(p => p.organizationId === o.id).length;
+                  const orgTasks = isDatabaseMode ? 0 : tasks.filter(t => t.organizationId === o.id).length;
+                  const limits = getOrgLimits(o.planId);
 
                   return (
-                    <TableRow key={org.id}>
+                    <TableRow key={o.id}>
                       <TableCell>
-                        <div className="font-bold text-foreground text-sm">{org.name}</div>
-                        <div className="text-[10px] font-mono text-muted-foreground">ID: {org.id}</div>
+                        <div className="font-bold text-foreground text-sm">{o.name}</div>
+                        <div className="text-[10px] font-mono text-muted-foreground">ID: {o.id}</div>
                       </TableCell>
                       <TableCell className="font-mono text-xs text-muted-foreground">
-                        {org.cnpj}
+                        {o.cnpj}
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-col gap-1 items-start">
                           <span className="bg-primary/10 text-primary text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider">
-                            {org.planId}
+                            {o.planId}
                           </span>
                           <span className={`text-[10px] font-bold flex items-center gap-1 ${
-                            org.status === 'active' ? 'text-success' :
-                            org.status === 'trial' ? 'text-warning' : 'text-danger'
+                            o.status === 'active' ? 'text-success' :
+                            o.status === 'trial' ? 'text-warning' : 'text-danger'
                           }`}>
                             <span className="h-1.5 w-1.5 rounded-full bg-current" />
-                            {org.status === 'active' ? 'Ativo' : org.status === 'trial' ? 'Trial' : 'Suspenso'}
+                            {o.status === 'active' ? 'Ativo' : o.status === 'trial' ? 'Trial' : 'Suspenso'}
                           </span>
                         </div>
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
-                        {new Date(org.createdAt).toLocaleDateString('pt-BR')}
+                        {new Date(o.createdAt).toLocaleDateString('pt-BR')}
                       </TableCell>
                       <TableCell className="min-w-[200px]">
                         <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
@@ -457,7 +704,7 @@ export default function EmpresasAdminPage() {
                             variant="outline"
                             size="sm"
                             onClick={() => {
-                              setSelectedOrgId(org.id);
+                              setSelectedOrgId(o.id);
                               setActiveTab('usuarios');
                             }}
                           >
@@ -467,7 +714,7 @@ export default function EmpresasAdminPage() {
                             variant="primary"
                             size="sm"
                             className="gap-1"
-                            onClick={() => handleSimulateAccess(org.id)}
+                            onClick={() => handleSimulateAccess(o.id)}
                           >
                             <Play className="h-3 w-3 fill-current" /> Acessar
                           </Button>
@@ -730,16 +977,16 @@ export default function EmpresasAdminPage() {
               <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'usuarios' | 'clientes' | 'historico' | 'leads' | 'funcionalidades')}>
                 <TabsList className="w-full grid grid-cols-2 md:grid-cols-5 gap-1 md:gap-0 bg-transparent md:bg-muted p-1">
                   <TabsTrigger value="usuarios" className="text-[11px] md:text-xs">
-                    <Users className="h-3.5 w-3.5 mr-1 md:mr-1.5" /> Usuários ({teamMembers.filter(m => m.organizationId === selectedOrg.id).length})
+                    <Users className="h-3.5 w-3.5 mr-1 md:mr-1.5" /> Usuários ({isDatabaseMode ? (selectedOrg.users?.length || 0) : teamMembers.filter(m => m.organizationId === selectedOrg.id).length})
                   </TabsTrigger>
                   <TabsTrigger value="clientes" className="text-[11px] md:text-xs">
-                    <Building2 className="h-3.5 w-3.5 mr-1 md:mr-1.5" /> Clientes ({clients.filter(c => c.organizationId === selectedOrg.id).length})
+                    <Building2 className="h-3.5 w-3.5 mr-1 md:mr-1.5" /> Clientes ({isDatabaseMode ? 0 : clients.filter(c => c.organizationId === selectedOrg.id).length})
                   </TabsTrigger>
                   <TabsTrigger value="leads" className="text-[11px] md:text-xs">
-                    <Target className="h-3.5 w-3.5 mr-1 md:mr-1.5" /> Leads ({leads.filter(l => l.organizationId === selectedOrg.id).length})
+                    <Target className="h-3.5 w-3.5 mr-1 md:mr-1.5" /> Leads ({isDatabaseMode ? 0 : leads.filter(l => l.organizationId === selectedOrg.id).length})
                   </TabsTrigger>
                   <TabsTrigger value="historico" className="text-[11px] md:text-xs">
-                    <Activity className="h-3.5 w-3.5 mr-1 md:mr-1.5" /> Histórico ({historyEvents.filter(h => h.organizationId === selectedOrg.id).length})
+                    <Activity className="h-3.5 w-3.5 mr-1 md:mr-1.5" /> Histórico ({isDatabaseMode ? 0 : historyEvents.filter(h => h.organizationId === selectedOrg.id).length})
                   </TabsTrigger>
                   <TabsTrigger value="funcionalidades" className="text-[11px] md:text-xs col-span-2 md:col-span-1">
                     <Settings className="h-3.5 w-3.5 mr-1 md:mr-1.5" /> Módulos
@@ -761,9 +1008,15 @@ export default function EmpresasAdminPage() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-border/20 text-xs">
-                            {teamMembers
-                              .filter(m => m.organizationId === selectedOrg.id)
-                              .map((user) => (
+                            {((isDatabaseMode ? (selectedOrg.users || []) : teamMembers.filter(m => m.organizationId === selectedOrg.id)) as {
+                              id: string;
+                              name: string;
+                              email?: string;
+                              lastAccess?: string;
+                              role: string;
+                              userRole?: UserRole;
+                              status: string;
+                            }[]).map((user) => (
                                 <tr key={user.id} className="hover:bg-muted/10">
                                   <td className="p-3">
                                     <div className="font-bold text-foreground">{user.name}</div>
@@ -771,17 +1024,25 @@ export default function EmpresasAdminPage() {
                                     <div className="text-[9px] text-muted-foreground font-mono mt-0.5">Último acesso: {user.lastAccess || 'nunca'}</div>
                                   </td>
                                   <td className="p-3 space-y-1">
-                                    <div className="font-medium text-foreground">{user.role}</div>
-                                    <select
-                                      value={user.userRole}
-                                      onChange={(e) => updateTeamMemberRole(user.id, e.target.value as UserRole)}
-                                      className="bg-background border border-border rounded px-1.5 py-0.5 text-[10px] font-semibold text-foreground focus:outline-none focus:ring-1 focus:ring-primary animate-none"
-                                    >
-                                      <option value="owner">Owner</option>
-                                      <option value="admin">Admin</option>
-                                      <option value="member">Member</option>
-                                      <option value="viewer">Viewer</option>
-                                    </select>
+                                    {isDatabaseMode ? (
+                                      <div className="font-semibold text-foreground uppercase text-[10px] bg-primary/5 border border-primary/10 rounded px-1.5 py-0.5 w-fit">
+                                        {user.role}
+                                      </div>
+                                    ) : (
+                                      <>
+                                        <div className="font-medium text-foreground">{user.role}</div>
+                                        <select
+                                          value={user.userRole}
+                                          onChange={(e) => updateTeamMemberRole(user.id, e.target.value as UserRole)}
+                                          className="bg-background border border-border rounded px-1.5 py-0.5 text-[10px] font-semibold text-foreground focus:outline-none focus:ring-1 focus:ring-primary animate-none"
+                                        >
+                                          <option value="owner">Owner</option>
+                                          <option value="admin">Admin</option>
+                                          <option value="member">Member</option>
+                                          <option value="viewer">Viewer</option>
+                                        </select>
+                                      </>
+                                    )}
                                   </td>
                                   <td className="p-3">
                                     <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
@@ -795,26 +1056,38 @@ export default function EmpresasAdminPage() {
                                   </td>
                                   <td className="p-3 text-right">
                                     <div className="flex flex-col gap-1 items-end">
-                                      <button
-                                        type="button"
-                                        onClick={() => updateTeamMemberStatus(user.id, user.status === 'disabled' ? 'active' : 'disabled')}
-                                        className={`text-[10px] font-bold flex items-center gap-0.5 ${
-                                          user.status === 'disabled' ? 'text-success hover:underline' : 'text-danger hover:underline'
-                                        }`}
-                                      >
-                                        {user.status === 'disabled' ? (
-                                          <><UserCheck className="h-3 w-3" /> Ativar</>
-                                        ) : (
-                                          <><UserX className="h-3 w-3" /> Desativar</>
-                                        )}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleResendInvite(user.name, user.email || '')}
-                                        className="text-[10px] font-bold text-primary hover:underline flex items-center gap-0.5"
-                                      >
-                                        <Send className="h-3 w-3" /> Reenviar convite
-                                      </button>
+                                      {isDatabaseMode ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleResetUserPassword(user.id, user.email || '')}
+                                          className="text-[10px] font-bold text-accent-cool hover:underline flex items-center gap-0.5"
+                                        >
+                                          <Settings className="h-3 w-3" /> Resetar Senha
+                                        </button>
+                                      ) : (
+                                        <>
+                                          <button
+                                            type="button"
+                                            onClick={() => updateTeamMemberStatus(user.id, user.status === 'disabled' ? 'active' : 'disabled')}
+                                            className={`text-[10px] font-bold flex items-center gap-0.5 ${
+                                              user.status === 'disabled' ? 'text-success hover:underline' : 'text-danger hover:underline'
+                                            }`}
+                                          >
+                                            {user.status === 'disabled' ? (
+                                              <><UserCheck className="h-3.5 w-3.5" /> Ativar</>
+                                            ) : (
+                                              <><UserX className="h-3.5 w-3.5" /> Desativar</>
+                                            )}
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleResendInvite(user.name, user.email || '')}
+                                            className="text-[10px] font-bold text-primary hover:underline flex items-center gap-0.5"
+                                          >
+                                            <Send className="h-3.5 w-3.5" /> Reenviar convite
+                                          </button>
+                                        </>
+                                      )}
                                     </div>
                                   </td>
                                 </tr>
@@ -1017,8 +1290,7 @@ export default function EmpresasAdminPage() {
                           variant="outline"
                           size="sm"
                           onClick={() => {
-                            resetFeaturesToPlanDefaults(selectedOrg.id);
-                            showModalFeedback(`Configurações de funcionalidades resetadas para o padrão do plano ${selectedOrg.planId.toUpperCase()}!`);
+                            handleResetFeatures(selectedOrg.id, selectedOrg.planId);
                           }}
                           className="text-xs flex items-center justify-center gap-1.5 py-1.5"
                         >
@@ -1029,10 +1301,15 @@ export default function EmpresasAdminPage() {
 
                       {/* Categories Lists */}
                       {(() => {
-                        const orgFeatures = organizationFeatures?.find(f => f.organizationId === selectedOrg.id) || {
-                          organizationId: selectedOrg.id,
-                          ...getPlanDefaultFeatures(selectedOrg.planId)
-                        };
+                        const orgFeatures = isDatabaseMode
+                          ? (selectedOrg.features || {
+                              organizationId: selectedOrg.id,
+                              ...getPlanDefaultFeatures(selectedOrg.planId)
+                            })
+                          : (organizationFeatures?.find(f => f.organizationId === selectedOrg.id) || {
+                              organizationId: selectedOrg.id,
+                              ...getPlanDefaultFeatures(selectedOrg.planId)
+                            });
                         const planDefaults = getPlanDefaultFeatures(selectedOrg.planId);
 
                         const categories = [
@@ -1114,22 +1391,21 @@ export default function EmpresasAdminPage() {
                                         </div>
 
                                         <button
-                                          type="button"
-                                          onClick={() => {
-                                            updateOrganizationFeature(selectedOrg.id, featureKey, !isEnabled);
-                                            showModalFeedback(`Módulo "${item.label}" ${!isEnabled ? 'ativado' : 'desativado'} com sucesso!`);
-                                          }}
-                                          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary/40 focus:ring-offset-1 bg-muted shrink-0 ${
-                                            isEnabled ? 'bg-primary' : 'bg-muted-foreground/30'
-                                          }`}
-                                          title={`Clique para ${isEnabled ? 'desativar' : 'ativar'} o módulo ${item.label}`}
-                                        >
-                                          <span
-                                            className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-background shadow ring-0 transition duration-200 ease-in-out ${
-                                              isEnabled ? 'translate-x-4' : 'translate-x-0'
-                                            }`}
-                                          />
-                                        </button>
+                                           type="button"
+                                           onClick={() => {
+                                             handleToggleFeature(selectedOrg.id, featureKey, !isEnabled);
+                                           }}
+                                           className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary/40 focus:ring-offset-1 bg-muted shrink-0 ${
+                                             isEnabled ? 'bg-primary' : 'bg-muted-foreground/30'
+                                           }`}
+                                           title={`Clique para ${isEnabled ? 'desativar' : 'ativar'} o módulo ${item.label}`}
+                                         >
+                                           <span
+                                             className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-background shadow ring-0 transition duration-200 ease-in-out ${
+                                               isEnabled ? 'translate-x-4' : 'translate-x-0'
+                                             }`}
+                                           />
+                                         </button>
                                       </div>
                                     );
                                   })}
