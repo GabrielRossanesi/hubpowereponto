@@ -30,7 +30,8 @@ import EmptyState from '../../components/ui/empty-state';
 import DatePicker from '../../components/ui/date-picker';
 import { isDatabaseDataMode } from '../../lib/data-mode';
 import { getClients, getTenantMembers } from '../clientes/actions';
-import type { Client } from '../../types';
+import { getRealPublications, createRealPublication } from './actions';
+import type { Client, Publication } from '../../types';
 import { useCallback } from 'react';
 
 // Custom Brand Icons to avoid missing lucide-react exports
@@ -100,6 +101,36 @@ function PlatformIcon({ platform }: { platform?: string }) {
   }
 }
 
+function isLikelyDirectImageUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+    const pathname = parsed.pathname.toLowerCase();
+
+    return (
+      hostname === 'i.ibb.co' ||
+      pathname.endsWith('.jpg') ||
+      pathname.endsWith('.jpeg') ||
+      pathname.endsWith('.png') ||
+      pathname.endsWith('.webp') ||
+      pathname.endsWith('.gif')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isImgBbPageUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+
+    return hostname === 'ibb.co' || hostname === 'imgbb.com';
+  } catch {
+    return false;
+  }
+}
+
 export default function PublicacoesPage() {
   const mounted = useMounted();
   const isDatabaseMode = isDatabaseDataMode;
@@ -116,16 +147,20 @@ export default function PublicacoesPage() {
   // Database States
   const [dbClients, setDbClients] = useState<Client[]>([]);
   const [dbMembers, setDbMembers] = useState<{ id: string; name: string }[]>([]);
+  const [dbPublications, setDbPublications] = useState<Publication[]>([]);
+  const [brokenImages, setBrokenImages] = useState<Record<string, boolean>>({});
 
   const loadDbData = useCallback(async () => {
     if (!isDatabaseMode) return;
     try {
-      const [resClients, resMembers] = await Promise.all([
+      const [resClients, resMembers, resPubs] = await Promise.all([
         getClients(false),
         getTenantMembers(),
+        getRealPublications(),
       ]);
       setDbClients(resClients);
       setDbMembers(resMembers);
+      setDbPublications(resPubs);
     } catch (err) {
       console.error('Error loading db data in publicacoes:', err);
     }
@@ -176,6 +211,8 @@ export default function PublicacoesPage() {
   // Clipboard copy feedback state
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+
+
   if (!mounted) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -185,7 +222,9 @@ export default function PublicacoesPage() {
   }
 
   // Filtered publications
-  const filteredPubs = publications.filter((pub) => {
+  const publicationsToRender = isDatabaseMode ? dbPublications : publications;
+
+  const filteredPubs = publicationsToRender.filter((pub) => {
     const matchesSearch = 
       pub.companyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       pub.clientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -227,7 +266,7 @@ export default function PublicacoesPage() {
     reader.readAsDataURL(file);
   };
 
-  const handleCreatePublication = (e: React.FormEvent) => {
+  const handleCreatePublication = async (e: React.FormEvent) => {
     e.preventDefault();
     const client = isDatabaseMode
       ? dbClients.find(c => c.id === selectedClientId)
@@ -247,6 +286,18 @@ export default function PublicacoesPage() {
         alert('Adicione pelo menos uma imagem para esta publicação.');
         return;
       }
+      
+      // Validation for single image
+      if (imageSource === 'external_url') {
+        if (isImgBbPageUrl(finalImageUrl)) {
+          alert('Esse parece ser o link da página do ImgBB. Copie o link direto da imagem, geralmente começando com https://i.ibb.co/');
+          return;
+        }
+        if (!isLikelyDirectImageUrl(finalImageUrl)) {
+          alert('O link informado não parece ser um endereço direto de imagem. Verifique se termina com uma extensão comum (.jpg, .png, etc.) ou se é um link direto do ImgBB (i.ibb.co).');
+          return;
+        }
+      }
       finalImages = [finalImageUrl];
     } else {
       const validImages = carouselImages.filter(url => url.trim() !== '');
@@ -254,30 +305,69 @@ export default function PublicacoesPage() {
         alert('Adicione pelo menos duas imagens para criar um carrossel.');
         return;
       }
+      
+      // Validation for carousel images
+      for (let i = 0; i < validImages.length; i++) {
+        const url = validImages[i];
+        if (isImgBbPageUrl(url)) {
+          alert(`A imagem ${i + 1} parece ser um link da página do ImgBB. Use o link direto começando com https://i.ibb.co/`);
+          return;
+        }
+        if (!isLikelyDirectImageUrl(url)) {
+          alert(`A imagem ${i + 1} não parece ser um endereço direto de imagem. Use um link direto terminando em .jpg, .png, .webp ou começando com https://i.ibb.co/`);
+          return;
+        }
+      }
       finalImageUrl = validImages[0];
       finalImages = validImages;
     }
 
-    addPublication({
-      clientId: client.id,
-      clientName: client.name,
-      companyName: client.companyName,
-      imageUrl: finalImageUrl,
-      images: finalImages,
-      postType: postType,
-      caption: caption,
-      scheduledDate: scheduledDate,
-      status: 'pending_approval',
-      approvalLink: '', // Generated via action afterwards
-      responsibleUser: responsavel,
-      platform: platform,
-      imageSource: imageSource,
-      imageFileName: postType === 'single_image' && imageSource === 'upload' ? imageFileName : undefined,
-      imageSize: postType === 'single_image' && imageSource === 'upload' ? imageSize : undefined,
-      imageMimeType: postType === 'single_image' && imageSource === 'upload' ? imageMimeType : undefined,
-    });
+    if (isDatabaseMode) {
+      const response = await createRealPublication({
+        clientId: client.id,
+        clientName: client.name,
+        companyName: client.companyName,
+        imageUrl: finalImageUrl,
+        images: finalImages,
+        postType: postType,
+        caption: caption,
+        scheduledDate: scheduledDate,
+        responsibleUser: responsavel,
+        platform: platform,
+        imageSource: imageSource,
+        imageFileName: postType === 'single_image' && imageSource === 'upload' ? imageFileName : undefined,
+        imageSize: postType === 'single_image' && imageSource === 'upload' ? imageSize : undefined,
+        imageMimeType: postType === 'single_image' && imageSource === 'upload' ? imageMimeType : undefined,
+      });
 
-    alert('Publicação criada com sucesso!');
+      if (response.success && response.data) {
+        setDbPublications(prev => [response.data!, ...prev]);
+        alert('Publicação criada com sucesso!');
+      } else {
+        alert('Erro ao criar publicação: ' + (response.error || 'Erro desconhecido.'));
+        return;
+      }
+    } else {
+      addPublication({
+        clientId: client.id,
+        clientName: client.name,
+        companyName: client.companyName,
+        imageUrl: finalImageUrl,
+        images: finalImages,
+        postType: postType,
+        caption: caption,
+        scheduledDate: scheduledDate,
+        status: 'pending_approval',
+        approvalLink: '', // Generated via action afterwards
+        responsibleUser: responsavel,
+        platform: platform,
+        imageSource: imageSource,
+        imageFileName: postType === 'single_image' && imageSource === 'upload' ? imageFileName : undefined,
+        imageSize: postType === 'single_image' && imageSource === 'upload' ? imageSize : undefined,
+        imageMimeType: postType === 'single_image' && imageSource === 'upload' ? imageMimeType : undefined,
+      });
+      alert('Publicação criada com sucesso!');
+    }
 
     setSelectedClientId('');
     setImageSource('external_url');
@@ -298,7 +388,10 @@ export default function PublicacoesPage() {
 
   const handleCopyLink = (pubId: string, approvalLink: string) => {
     if (typeof navigator !== 'undefined') {
-      navigator.clipboard.writeText(approvalLink);
+      const fullLink = approvalLink.startsWith('http')
+        ? approvalLink
+        : `${window.location.origin}${approvalLink}`;
+      navigator.clipboard.writeText(fullLink);
       setCopiedId(pubId);
       setTimeout(() => setCopiedId(null), 2000);
     }
@@ -410,12 +503,32 @@ export default function PublicacoesPage() {
                 <div className="flex flex-col flex-1">
                   {/* Visual Image Preview */}
                   <div className="relative h-48 bg-muted overflow-hidden shrink-0 border-b border-border/60">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img 
-                      src={images[0] || pub.imageUrl} 
-                      alt="Social media post visual creative" 
-                      className="w-full h-full object-cover"
-                    />
+                    {brokenImages[images[0] || pub.imageUrl] ? (
+                      <div className="w-full h-full flex flex-col items-center justify-center p-4 text-center bg-muted text-muted-foreground gap-1 select-none">
+                        <AlertCircle className="h-6 w-6 text-warning shrink-0" />
+                        <span className="text-[11px] font-bold text-foreground">Imagem não carregada</span>
+                        <span className="text-[9px] text-muted-foreground/90 max-w-[180px] leading-tight">Verifique se o link colado está correto.</span>
+                        <a 
+                          href={images[0] || pub.imageUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[9px] text-primary font-bold hover:underline mt-1 cursor-pointer flex items-center gap-0.5"
+                        >
+                          Abrir link <ExternalLink className="h-2.5 w-2.5" />
+                        </a>
+                      </div>
+                    ) : (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img 
+                        src={images[0] || pub.imageUrl} 
+                        alt="Social media post visual creative" 
+                        className="w-full h-full object-cover"
+                        onError={() => {
+                          const url = images[0] || pub.imageUrl;
+                          setBrokenImages(prev => ({ ...prev, [url]: true }));
+                        }}
+                      />
+                    )}
                     {isCarousel && (
                       <div className="absolute bottom-2.5 left-2.5 bg-black/60 px-2 py-0.5 rounded text-[10px] text-white font-semibold">
                         Carrossel ({images.length} imagens)
@@ -665,11 +778,23 @@ export default function PublicacoesPage() {
                     type="url"
                     placeholder="Link de imagem (ex: https://images.unsplash.com/...)"
                     value={imageUrl}
-                    onChange={(e) => setImageUrl(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setImageUrl(val);
+                      if (brokenImages[val]) {
+                        setBrokenImages(prev => {
+                          const next = { ...prev };
+                          delete next[val];
+                          return next;
+                        });
+                      }
+                    }}
                     required
                   />
-                  <p className="text-[10px] text-muted-foreground/80">
-                    Faça upload temporário da arte no ImgBB, copie o link direto da imagem (clique com botão direito &gt; copiar endereço da imagem) e cole no campo acima.
+                  <p className="text-[10px] text-muted-foreground/80 leading-relaxed">
+                    Use o ImgBB para gerar uma URL. Depois copie o link direto da imagem, normalmente começando com <strong>https://i.ibb.co/</strong>.<br />
+                    Exemplo correto: <code>https://i.ibb.co/.../imagem.jpg</code><br />
+                    Evite links como: <code>https://ibb.co/...</code> ou <code>https://imgbb.com/...</code>
                   </p>
                 </div>
               ) : (
@@ -712,9 +837,17 @@ export default function PublicacoesPage() {
                       type="url"
                       value={imgUrl}
                       onChange={(e) => {
+                        const val = e.target.value;
                         const newList = [...carouselImages];
-                        newList[index] = e.target.value;
+                        newList[index] = val;
                         setCarouselImages(newList);
+                        if (brokenImages[val]) {
+                          setBrokenImages(prev => {
+                            const next = { ...prev };
+                            delete next[val];
+                            return next;
+                          });
+                        }
                       }}
                       placeholder={`https://images.unsplash.com/post-art-${index + 1}`}
                       className="h-10 flex-1 pl-3 pr-3 rounded-lg border border-border bg-background text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:border-primary transition-all placeholder:text-muted-foreground/75"
@@ -749,8 +882,9 @@ export default function PublicacoesPage() {
                     + Adicionar Imagem ao Carrossel
                   </Button>
                 )}
-                <p className="text-[10px] text-muted-foreground/80">
-                  Faça upload temporário da arte no ImgBB, copie o link direto da imagem e cole nos campos.
+                <p className="text-[10px] text-muted-foreground/80 leading-relaxed text-right">
+                  Use o ImgBB para gerar as URLs. Copie os links diretos começando com <strong>https://i.ibb.co/</strong>.<br />
+                  Evite links como: <code>https://ibb.co/...</code> ou <code>https://imgbb.com/...</code>
                 </p>
               </div>
             </div>
@@ -802,12 +936,37 @@ export default function PublicacoesPage() {
                 </div>
                 {finalPreviewImageUrl && (
                   <div className="relative aspect-square bg-muted flex items-center justify-center overflow-hidden border-b border-border/30">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={finalPreviewImageUrl} alt="Preview creative" className="object-cover w-full h-full" />
-                    {postType === 'carousel' && (
-                      <div className="absolute bottom-2.5 right-2.5 bg-black/60 px-2 py-0.5 rounded text-[10px] text-white font-semibold">
-                        1 / {carouselImages.filter(url => url.trim() !== '').length || 2}
+                    {brokenImages[finalPreviewImageUrl] ? (
+                      <div className="w-full h-full flex flex-col items-center justify-center p-4 text-center text-muted-foreground gap-1 select-none">
+                        <AlertCircle className="h-6 w-6 text-warning shrink-0" />
+                        <span className="text-[11px] font-bold text-foreground">Imagem não carregada</span>
+                        <span className="text-[9px] text-muted-foreground/90 max-w-[180px] leading-tight">Verifique se o link colado está correto.</span>
+                        <a 
+                          href={finalPreviewImageUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[9px] text-primary font-bold hover:underline mt-1 cursor-pointer flex items-center gap-0.5"
+                        >
+                          Abrir link <ExternalLink className="h-2.5 w-2.5" />
+                        </a>
                       </div>
+                    ) : (
+                      <>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img 
+                          src={finalPreviewImageUrl} 
+                          alt="Preview creative" 
+                          className="object-cover w-full h-full" 
+                          onError={() => {
+                            setBrokenImages(prev => ({ ...prev, [finalPreviewImageUrl]: true }));
+                          }}
+                        />
+                        {postType === 'carousel' && (
+                          <div className="absolute bottom-2.5 right-2.5 bg-black/60 px-2 py-0.5 rounded text-[10px] text-white font-semibold">
+                            1 / {carouselImages.filter(url => url.trim() !== '').length || 2}
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 )}

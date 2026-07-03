@@ -95,6 +95,7 @@ model Organization {
   clients     Client[]
   tasks       Task[]
   taskNotes   TaskNote[]
+  publications Publication[]
 
   @@map("organization")
 }
@@ -187,6 +188,7 @@ model Client {
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
   tasks           Task[]
+  publications    Publication[]
 
   @@index([organizationId])
   @@index([organizationId, status])
@@ -248,3 +250,42 @@ model TaskNote {
   @@index([authorUserId])
   @@map("task_note")
 }
+
+model Publication {
+  id              String       @id @default(uuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  clientId        String?
+  client          Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  clientName      String?
+  companyName     String?
+
+  imageUrl        String?
+  images          Json?
+
+  postType        String       @default("single_image")
+  caption         String
+  scheduledDate   String
+  status          String       @default("pending_approval")
+  
+  approvalToken   String       @unique @default(uuid())
+  clientComments  String?
+  responsibleUser String
+
+  platform        String
+  imageSource     String?
+  imageFileName   String?
+  imageSize       Int?
+  imageMimeType   String?
+
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([approvalToken])
+  @@map("publication")
+}
+

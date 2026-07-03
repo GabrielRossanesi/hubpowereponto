@@ -9,13 +9,21 @@ import {
   Calendar, 
   MessageSquare, 
   Send, 
-  AlertCircle 
+  AlertCircle,
+  ExternalLink
 } from 'lucide-react';
 import { useStore } from '../../../../lib/store';
 import { useMounted } from '../../../../hooks/useMounted';
 import { LogoHorizontal } from '../../../../components/ui/logo';
 import Card, { CardContent } from '../../../../components/ui/card';
 import Button from '../../../../components/ui/button';
+import { isDatabaseDataMode } from '../../../../lib/data-mode';
+import { 
+  getPublicationByApprovalToken, 
+  approvePublicationByTokenAction, 
+  requestPublicationChangesByTokenAction 
+} from '../../../publicacoes/actions';
+import type { Publication } from '../../../../types';
 
 // Custom Brand Icons to avoid missing lucide-react exports
 function InstagramIcon({ className }: { className?: string }) {
@@ -74,13 +82,45 @@ function ApprovalContent() {
     requestPublicationChangesByToken 
   } = useStore();
 
+  const [dbPub, setDbPub] = useState<Publication | null>(null);
+  const [isLoadingDb, setIsLoadingDb] = useState(isDatabaseDataMode);
+  const [brokenImages, setBrokenImages] = useState<Record<string, boolean>>({});
+  const [carouselIndex, setCarouselIndex] = useState(0);
+
   const [feedback, setFeedback] = useState('');
   const [showFeedbackForm, setShowFeedbackForm] = useState(false);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Load publication from DB if in database mode
+  useEffect(() => {
+    if (!isDatabaseDataMode) return;
+    let active = true;
+    const fetchPub = async () => {
+      try {
+        setIsLoadingDb(true);
+        const res = await getPublicationByApprovalToken(token);
+        if (active) {
+          setDbPub(res);
+        }
+      } catch (err) {
+        console.error('Error fetching public publication:', err);
+      } finally {
+        if (active) {
+          setIsLoadingDb(false);
+        }
+      }
+    };
+    if (token) {
+      fetchPub();
+    }
+    return () => {
+      active = false;
+    };
+  }, [token]);
   
   // Find publication
-  const publication = publications.find(p => p.id === publicationId);
+  const publication = isDatabaseDataMode ? dbPub : publications.find(p => p.id === publicationId);
 
   // Time remaining state
   const [timeLeft, setTimeLeft] = useState<string>('');
@@ -113,6 +153,15 @@ function ApprovalContent() {
   }, [publication]);
 
   if (!mounted) return null;
+
+  if (isDatabaseDataMode && isLoadingDb) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col justify-center items-center text-muted-foreground font-medium">
+        <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full mb-3" />
+        Carregando publicação...
+      </div>
+    );
+  }
 
   // Validation checks
   if (!publication) {
@@ -153,9 +202,17 @@ function ApprovalContent() {
   }
 
   // Action Handlers
-  const handleApprove = () => {
+  const handleApprove = async () => {
     try {
-      approvePublicationByToken(publication.id, token);
+      if (isDatabaseDataMode) {
+        const res = await approvePublicationByTokenAction(token);
+        if (!res.success) {
+          throw new Error(res.error || 'Erro ao aprovar publicação.');
+        }
+        setDbPub(prev => prev ? { ...prev, status: 'approved' } : null);
+      } else {
+        approvePublicationByToken(publication.id, token);
+      }
       setActionSuccess('approved');
     } catch (e) {
       const err = e as Error;
@@ -163,7 +220,7 @@ function ApprovalContent() {
     }
   };
 
-  const handleRequestChanges = (e: React.FormEvent) => {
+  const handleRequestChanges = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!feedback.trim()) {
       alert('Por favor, informe detalhadamente quais ajustes são necessários.');
@@ -171,7 +228,15 @@ function ApprovalContent() {
     }
 
     try {
-      requestPublicationChangesByToken(publication.id, token, feedback);
+      if (isDatabaseDataMode) {
+        const res = await requestPublicationChangesByTokenAction(token, feedback);
+        if (!res.success) {
+          throw new Error(res.error || 'Erro ao solicitar alterações.');
+        }
+        setDbPub(prev => prev ? { ...prev, status: 'changes_requested', clientComments: feedback } : null);
+      } else {
+        requestPublicationChangesByToken(publication.id, token, feedback);
+      }
       setActionSuccess('changes_requested');
     } catch (e) {
       const err = e as Error;
@@ -266,6 +331,13 @@ function ApprovalContent() {
     );
   }
 
+  const images = publication.images?.length
+    ? publication.images
+    : publication.imageUrl
+      ? [publication.imageUrl]
+      : [];
+  const isCarousel = publication.postType === 'carousel' || images.length > 1;
+
   return (
     <div className="min-h-screen bg-background text-foreground py-8 px-4 sm:px-6 lg:px-8 flex flex-col justify-between">
       <div className="max-w-5xl mx-auto w-full space-y-8 animate-in fade-in duration-300">
@@ -273,9 +345,11 @@ function ApprovalContent() {
         {/* Header */}
         <header className="flex items-center justify-between border-b border-border/60 pb-6">
           <LogoHorizontal size="md" />
-          <span className="bg-primary/5 border border-primary/20 text-primary px-3 py-0.5 rounded-full text-[10px] font-semibold tracking-wide">
-            Ambiente demonstrativo
-          </span>
+          {!isDatabaseDataMode && (
+            <span className="bg-primary/5 border border-primary/20 text-primary px-3 py-0.5 rounded-full text-[10px] font-semibold tracking-wide">
+              Ambiente demonstrativo
+            </span>
+          )}
         </header>
 
         {errorMsg && (
@@ -309,13 +383,81 @@ function ApprovalContent() {
               
               {/* Image box */}
               <div className="aspect-square bg-background/50 flex items-center justify-center overflow-hidden relative border-b border-border/20">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img 
-                  src={publication.imageUrl} 
-                  alt="Post preview creative" 
-                  className="object-cover w-full h-full"
-                />
+                {images.length > 0 ? (
+                  <>
+                    {brokenImages[images[carouselIndex]] ? (
+                      <div className="w-full h-full flex flex-col items-center justify-center p-4 text-center bg-card text-muted-foreground gap-2 select-none animate-in fade-in duration-200">
+                        <AlertCircle className="h-8 w-8 text-warning shrink-0" />
+                        <span className="text-sm font-bold text-foreground">Imagem não carregada</span>
+                        <span className="text-xs text-muted-foreground/90 max-w-[240px] leading-relaxed">
+                          Não foi possível carregar a mídia. Verifique se o endereço da imagem está correto.
+                        </span>
+                        <a 
+                          href={images[carouselIndex]}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-primary font-bold hover:underline mt-1 cursor-pointer flex items-center gap-0.5"
+                        >
+                          Abrir link original <ExternalLink className="h-3 w-3" />
+                        </a>
+                      </div>
+                    ) : (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img 
+                        src={images[carouselIndex]} 
+                        alt={`Post preview creative ${carouselIndex + 1}`} 
+                        className="object-cover w-full h-full"
+                        onError={() => {
+                          const url = images[carouselIndex];
+                          setBrokenImages(prev => ({ ...prev, [url]: true }));
+                        }}
+                      />
+                    )}
+                    {isCarousel && (
+                      <>
+                        <div className="absolute bottom-2.5 left-2.5 bg-black/60 px-2 py-0.5 rounded text-[10px] text-white font-semibold">
+                          {carouselIndex + 1} / {images.length}
+                        </div>
+                        {carouselIndex > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setCarouselIndex(prev => prev - 1)}
+                            className="absolute left-2 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/75 text-white h-7 w-7 rounded-full flex items-center justify-center font-bold text-xs cursor-pointer select-none"
+                          >
+                            &lt;
+                          </button>
+                        )}
+                        {carouselIndex < images.length - 1 && (
+                          <button
+                            type="button"
+                            onClick={() => setCarouselIndex(prev => prev + 1)}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/75 text-white h-7 w-7 rounded-full flex items-center justify-center font-bold text-xs cursor-pointer select-none"
+                          >
+                            &gt;
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </>
+                ) : (
+                  <div className="text-xs text-muted-foreground">Nenhuma imagem cadastrada</div>
+                )}
               </div>
+
+              {isCarousel && (
+                <div className="flex justify-center gap-1.5 py-2.5 bg-card border-b border-border/10">
+                  {images.map((_, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => setCarouselIndex(i)}
+                      className={`h-1.5 w-1.5 rounded-full transition-all cursor-pointer ${
+                        i === carouselIndex ? 'bg-primary w-3' : 'bg-muted-foreground/35 hover:bg-muted-foreground/50'
+                      }`}
+                    />
+                  ))}
+                </div>
+              )}
 
               {/* Feed simulation details */}
               <div className="p-4 space-y-2 bg-muted/10">
@@ -430,7 +572,10 @@ function ApprovalContent() {
             )}
 
             <div className="p-4 bg-muted/10 border border-border/30 rounded-xl text-xs text-muted-foreground leading-relaxed text-center">
-              Ambiente demonstrativo da NV Hub. As ações realizadas nesta página atualizam o painel operacional em modo sandbox.
+              {isDatabaseDataMode 
+                ? 'Revise a arte e aprove ou solicite ajustes para esta publicação. Sua resposta será registrada no painel operacional da NV Hub.'
+                : 'Ambiente demonstrativo da NV Hub. As ações realizadas nesta página atualizam o painel operacional em modo sandbox.'
+              }
             </div>
 
           </div>

@@ -1,0 +1,258 @@
+'use server';
+
+import prisma from '../../lib/prisma';
+import { getActiveOrganizationId, validateTenantAccess, getSession } from '../../lib/tenant';
+import { isDatabaseDataMode } from '../../lib/data-mode';
+import crypto from 'crypto';
+import type { Publication } from '../../types';
+import { Publication as PrismaPublication } from '@prisma/client';
+
+// Helper to map DB Publication to frontend Publication shape
+function mapDbPubToPub(dbPub: PrismaPublication): Publication {
+  let imagesArr: string[] = [];
+  if (dbPub.images) {
+    try {
+      if (typeof dbPub.images === 'string') {
+        imagesArr = JSON.parse(dbPub.images);
+      } else if (Array.isArray(dbPub.images)) {
+        imagesArr = dbPub.images as string[];
+      }
+    } catch (e) {
+      console.error('Error parsing images JSON:', e);
+    }
+  }
+  if (imagesArr.length === 0 && dbPub.imageUrl) {
+    imagesArr = [dbPub.imageUrl];
+  }
+
+  const approvalLink = `/publicacao/${dbPub.id}/aprovacao?token=${dbPub.approvalToken}`;
+
+  // Consider it expired after 24h
+  const expiresAt = new Date(new Date(dbPub.createdAt).getTime() + 24 * 60 * 60 * 1000).toISOString();
+
+  return {
+    id: dbPub.id,
+    organizationId: dbPub.organizationId,
+    clientId: dbPub.clientId || '',
+    clientName: dbPub.clientName || '',
+    companyName: dbPub.companyName || '',
+    imageUrl: dbPub.imageUrl || '',
+    images: imagesArr,
+    postType: (dbPub.postType || 'single_image') as 'single_image' | 'carousel',
+    caption: dbPub.caption || '',
+    scheduledDate: dbPub.scheduledDate || '',
+    status: (dbPub.status || 'pending_approval') as 'pending_approval' | 'approved' | 'changes_requested',
+    approvalToken: dbPub.approvalToken,
+    approvalLink,
+    approvalLinkStatus: dbPub.status === 'approved' ? 'approved' : (dbPub.status === 'changes_requested' ? 'changes_requested' : 'active'),
+    approvalLinkExpiresAt: expiresAt,
+    clientComments: dbPub.clientComments || undefined,
+    responsibleUser: dbPub.responsibleUser || '',
+    platform: (dbPub.platform || 'instagram') as 'instagram' | 'facebook' | 'linkedin' | 'tiktok' | 'google_business' | 'other',
+    imageSource: (dbPub.imageSource || 'external_url') as 'upload' | 'external_url',
+    imageFileName: dbPub.imageFileName || undefined,
+    imageSize: dbPub.imageSize || undefined,
+    imageMimeType: dbPub.imageMimeType || undefined,
+    createdAt: dbPub.createdAt.toISOString(),
+  };
+}
+
+export async function getRealPublications(): Promise<Publication[]> {
+  if (!isDatabaseDataMode) return [];
+
+  try {
+    const activeOrgId = await getActiveOrganizationId();
+    await validateTenantAccess(activeOrgId);
+
+    const dbPubs = await prisma.publication.findMany({
+      where: {
+        organizationId: activeOrgId,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    return dbPubs.map(mapDbPubToPub);
+  } catch (err) {
+    console.error('Error fetching real publications:', err);
+    return [];
+  }
+}
+
+export async function createRealPublication(data: {
+  clientId: string;
+  clientName: string;
+  companyName: string;
+  imageUrl: string;
+  images: string[];
+  postType: string;
+  caption: string;
+  scheduledDate: string;
+  responsibleUser: string;
+  platform: string;
+  imageSource?: string;
+  imageFileName?: string;
+  imageSize?: number;
+  imageMimeType?: string;
+}): Promise<{ success: boolean; data?: Publication; error?: string }> {
+  if (!isDatabaseDataMode) {
+    return { success: false, error: 'Database mode not active.' };
+  }
+
+  try {
+    const activeOrgId = await getActiveOrganizationId();
+    await validateTenantAccess(activeOrgId);
+
+    const token = crypto.randomUUID();
+
+    const dbPub = await prisma.publication.create({
+      data: {
+        organizationId: activeOrgId,
+        clientId: data.clientId,
+        clientName: data.clientName,
+        companyName: data.companyName,
+        imageUrl: data.imageUrl,
+        images: data.images, // JSON array
+        postType: data.postType,
+        caption: data.caption,
+        scheduledDate: data.scheduledDate,
+        status: 'pending_approval',
+        approvalToken: token,
+        responsibleUser: data.responsibleUser,
+        platform: data.platform,
+        imageSource: data.imageSource || 'external_url',
+        imageFileName: data.imageFileName,
+        imageSize: data.imageSize,
+        imageMimeType: data.imageMimeType,
+      },
+    });
+
+    // Write audit log
+    const session = await getSession();
+    const userId = session?.user?.id || '';
+    if (userId) {
+      await prisma.auditLog.create({
+        data: {
+          organizationId: activeOrgId,
+          action: `PUBLICATION_CREATED: ${data.companyName} (${data.platform})`,
+          userId: userId,
+          target: dbPub.id,
+        },
+      });
+    }
+
+    return { success: true, data: mapDbPubToPub(dbPub) };
+  } catch (err: unknown) {
+    console.error('Error creating real publication:', err);
+    const errMsg = err instanceof Error ? err.message : 'Erro ao criar publicação.';
+    return { success: false, error: errMsg };
+  }
+}
+
+export async function getPublicationByApprovalToken(token: string): Promise<Publication | null> {
+  try {
+    const dbPub = await prisma.publication.findUnique({
+      where: {
+        approvalToken: token,
+      },
+    });
+
+    if (!dbPub) return null;
+    return mapDbPubToPub(dbPub);
+  } catch (err) {
+    console.error('Error fetching public publication by token:', err);
+    return null;
+  }
+}
+
+export async function approvePublicationByTokenAction(token: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const dbPub = await prisma.publication.findUnique({
+      where: {
+        approvalToken: token,
+      },
+    });
+
+    if (!dbPub) {
+      return { success: false, error: 'Publicação não encontrada.' };
+    }
+
+    await prisma.publication.update({
+      where: {
+        approvalToken: token,
+      },
+      data: {
+        status: 'approved',
+      },
+    });
+
+    // Write audit log
+    const firstMember = await prisma.member.findFirst({
+      where: { organizationId: dbPub.organizationId },
+      select: { userId: true }
+    });
+    if (firstMember) {
+      await prisma.auditLog.create({
+        data: {
+          organizationId: dbPub.organizationId,
+          action: `PUBLICATION_APPROVED: ${dbPub.companyName}`,
+          userId: firstMember.userId,
+          target: dbPub.id,
+        },
+      });
+    }
+
+    return { success: true };
+  } catch (err: unknown) {
+    console.error('Error approving publication:', err);
+    const errMsg = err instanceof Error ? err.message : 'Erro ao aprovar publicação.';
+    return { success: false, error: errMsg };
+  }
+}
+
+export async function requestPublicationChangesByTokenAction(token: string, feedback: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const dbPub = await prisma.publication.findUnique({
+      where: {
+        approvalToken: token,
+      },
+    });
+
+    if (!dbPub) {
+      return { success: false, error: 'Publicação não encontrada.' };
+    }
+
+    await prisma.publication.update({
+      where: {
+        approvalToken: token,
+      },
+      data: {
+        status: 'changes_requested',
+        clientComments: feedback,
+      },
+    });
+
+    // Write audit log
+    const firstMember = await prisma.member.findFirst({
+      where: { organizationId: dbPub.organizationId },
+      select: { userId: true }
+    });
+    if (firstMember) {
+      await prisma.auditLog.create({
+        data: {
+          organizationId: dbPub.organizationId,
+          action: `PUBLICATION_CHANGES_REQUESTED: ${feedback.substring(0, 100)}`,
+          userId: firstMember.userId,
+          target: dbPub.id,
+        },
+      });
+    }
+
+    return { success: true };
+  } catch (err: unknown) {
+    console.error('Error requesting changes:', err);
+    const errMsg = err instanceof Error ? err.message : 'Erro ao registrar alterações.';
+    return { success: false, error: errMsg };
+  }
+}
