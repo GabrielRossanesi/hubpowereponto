@@ -97,7 +97,7 @@ export async function getRealOrganizations() {
         responsibleName: '',
         responsibleEmail: '',
         planId: org.planId as 'starter' | 'pro' | 'enterprise',
-        status: org.isActive ? ('active' as const) : ('suspended' as const),
+        status: org.archivedAt ? ('archived' as const) : (org.isActive ? ('active' as const) : ('suspended' as const)),
         notes: '',
         createdAt: org.createdAt.toISOString(),
         logo: org.logo || undefined,
@@ -358,6 +358,391 @@ export async function resetUserPasswordInDatabase(userId: string, passwordRaw: s
   } catch (error) {
     console.error('Error in resetUserPasswordInDatabase:', error);
     const message = error instanceof Error ? error.message : 'Erro ao resetar senha.';
+    throw new Error(message);
+  }
+}
+
+/**
+ * Archives a real organization (soft delete).
+ */
+export async function archiveRealOrganization(organizationId: string) {
+  const { executorId } = await requireOperator();
+  const session = await getSession();
+
+  try {
+    const org = await prisma.organization.findUnique({
+      where: { id: organizationId }
+    });
+
+    if (!org) {
+      throw new Error('Organização não encontrada.');
+    }
+
+    if (org.slug === 'nv-hub-admin') {
+      throw new Error('Não é permitido arquivar a organização administrativa raiz da plataforma.');
+    }
+
+    if (session?.session?.activeOrganizationId === organizationId) {
+      throw new Error('Não é permitido arquivar a organização na qual você está ativo no momento. Mude de organização ativa antes de arquivá-la.');
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.organization.update({
+        where: { id: organizationId },
+        data: {
+          isActive: false,
+          archivedAt: new Date(),
+          archivedBy: executorId
+        }
+      });
+
+      await tx.auditLog.create({
+        data: {
+          action: 'ORGANIZATION_ARCHIVED',
+          target: organizationId,
+          organizationId: organizationId,
+          userId: executorId
+        }
+      });
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error in archiveRealOrganization:', error);
+    const message = error instanceof Error ? error.message : 'Erro ao arquivar organização.';
+    throw new Error(message);
+  }
+}
+
+/**
+ * Restores an archived organization.
+ */
+export async function restoreRealOrganization(organizationId: string) {
+  const { executorId } = await requireOperator();
+
+  try {
+    const org = await prisma.organization.findUnique({
+      where: { id: organizationId }
+    });
+
+    if (!org) {
+      throw new Error('Organização não encontrada.');
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.organization.update({
+        where: { id: organizationId },
+        data: {
+          isActive: true,
+          archivedAt: null,
+          archivedBy: null
+        }
+      });
+
+      await tx.auditLog.create({
+        data: {
+          action: 'ORGANIZATION_RESTORED',
+          target: organizationId,
+          organizationId: organizationId,
+          userId: executorId
+        }
+      });
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error in restoreRealOrganization:', error);
+    const message = error instanceof Error ? error.message : 'Erro ao restaurar organização.';
+    throw new Error(message);
+  }
+}
+
+/**
+ * Lists all users/members of an organization.
+ */
+export async function getOrganizationUsers(organizationId: string) {
+  await requireOperator();
+
+  try {
+    const members = await prisma.member.findMany({
+      where: { organizationId },
+      include: {
+        user: true
+      },
+      orderBy: {
+        createdAt: 'asc'
+      }
+    });
+
+    return members.map(m => ({
+      memberId: m.id,
+      userId: m.user.id,
+      name: m.user.name,
+      email: m.user.email,
+      role: m.role as 'owner' | 'admin' | 'member' | 'viewer',
+      mustChangePassword: m.user.mustChangePassword,
+      createdAt: m.createdAt.toISOString()
+    }));
+  } catch (error) {
+    console.error('Error in getOrganizationUsers:', error);
+    throw new Error('Erro ao buscar usuários da organização.');
+  }
+}
+
+/**
+ * Creates a new user or links an existing user to an organization.
+ */
+export async function createOrganizationUser(
+  organizationId: string,
+  data: {
+    name: string;
+    email: string;
+    role: 'owner' | 'admin' | 'member' | 'viewer';
+    passwordRaw: string;
+    mustChange: boolean;
+  }
+) {
+  const { executorId } = await requireOperator();
+
+  try {
+    // Basic validations
+    if (!data.name.trim()) throw new Error('Nome é obrigatório.');
+    if (!data.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) {
+      throw new Error('Formato de e-mail inválido.');
+    }
+    if (!data.passwordRaw || data.passwordRaw.length < 6) {
+      throw new Error('A senha temporária deve conter no mínimo 6 caracteres.');
+    }
+
+    const org = await prisma.organization.findUnique({
+      where: { id: organizationId }
+    });
+    if (!org) throw new Error('Organização não encontrada.');
+    if (org.archivedAt) throw new Error('A organização está arquivada e não permite novos usuários.');
+
+    const existingUser = await prisma.user.findUnique({
+      where: { email: data.email }
+    });
+
+    if (existingUser) {
+      // Check if already a member
+      const existingMember = await prisma.member.findUnique({
+        where: {
+          organizationId_userId: {
+            organizationId,
+            userId: existingUser.id
+          }
+        }
+      });
+
+      if (existingMember) {
+        throw new Error('Este usuário já pertence a esta empresa.');
+      }
+
+      // Link user as member
+      await prisma.$transaction(async (tx) => {
+        await tx.member.create({
+          data: {
+            organizationId,
+            userId: existingUser.id,
+            role: data.role
+          }
+        });
+
+        await tx.auditLog.create({
+          data: {
+            action: 'ORGANIZATION_USER_CREATED',
+            target: existingUser.id,
+            organizationId,
+            userId: executorId
+          }
+        });
+      });
+
+      return { success: true, userId: existingUser.id, linkedOnly: true };
+    }
+
+    // Create new user
+    const hashedPassword = await hashPassword(data.passwordRaw);
+
+    const result = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          name: data.name,
+          email: data.email,
+          emailVerified: true,
+          mustChangePassword: data.mustChange,
+          accounts: {
+            create: {
+              providerId: 'credential',
+              accountId: data.email,
+              password: hashedPassword
+            }
+          },
+          memberships: {
+            create: {
+              organizationId,
+              role: data.role
+            }
+          }
+        }
+      });
+
+      await tx.auditLog.create({
+        data: {
+          action: 'ORGANIZATION_USER_CREATED',
+          target: user.id,
+          organizationId,
+          userId: executorId
+        }
+      });
+
+      return user;
+    });
+
+    return { success: true, userId: result.id, linkedOnly: false };
+  } catch (error) {
+    console.error('Error in createOrganizationUser:', error);
+    const message = error instanceof Error ? error.message : 'Erro ao criar usuário na organização.';
+    throw new Error(message);
+  }
+}
+
+/**
+ * Updates a member's role inside the organization.
+ */
+export async function updateOrganizationUserRole(memberId: string, role: string) {
+  const { executorId } = await requireOperator();
+
+  try {
+    const member = await prisma.member.findUnique({
+      where: { id: memberId }
+    });
+
+    if (!member) throw new Error('Vínculo de membro não encontrado.');
+
+    await prisma.$transaction(async (tx) => {
+      await tx.member.update({
+        where: { id: memberId },
+        data: { role }
+      });
+
+      await tx.auditLog.create({
+        data: {
+          action: 'ORGANIZATION_USER_ROLE_UPDATED',
+          target: member.userId,
+          organizationId: member.organizationId,
+          userId: executorId
+        }
+      });
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error in updateOrganizationUserRole:', error);
+    const message = error instanceof Error ? error.message : 'Erro ao atualizar papel do membro.';
+    throw new Error(message);
+  }
+}
+
+/**
+ * Resets an organization user's password and optionally forces password change on next login.
+ */
+export async function resetOrganizationUserPassword(
+  userId: string,
+  passwordRaw: string,
+  mustChange = true
+) {
+  const { executorId } = await requireOperator();
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      include: { memberships: true }
+    });
+
+    if (!user) throw new Error('Usuário não encontrado.');
+    const orgId = user.memberships[0]?.organizationId;
+    if (!orgId) throw new Error('Usuário não possui vínculo com nenhuma organização.');
+
+    if (!passwordRaw || passwordRaw.length < 6) {
+      throw new Error('A nova senha deve conter no mínimo 6 caracteres.');
+    }
+
+    const hashedPassword = await hashPassword(passwordRaw);
+
+    await prisma.$transaction(async (tx) => {
+      // 1. Update account credentials
+      await tx.account.updateMany({
+        where: {
+          userId,
+          providerId: 'credential'
+        },
+        data: {
+          password: hashedPassword
+        }
+      });
+
+      // 2. Update user change password flag
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          mustChangePassword: mustChange,
+          passwordChangedAt: null
+        }
+      });
+
+      // 3. Log
+      await tx.auditLog.create({
+        data: {
+          action: 'ORGANIZATION_USER_PASSWORD_RESET',
+          target: userId,
+          organizationId: orgId,
+          userId: executorId
+        }
+      });
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error in resetOrganizationUserPassword:', error);
+    const message = error instanceof Error ? error.message : 'Erro ao resetar senha do usuário.';
+    throw new Error(message);
+  }
+}
+
+/**
+ * Removes a member (link) from an organization.
+ */
+export async function removeOrganizationMember(memberId: string) {
+  const { executorId } = await requireOperator();
+
+  try {
+    const member = await prisma.member.findUnique({
+      where: { id: memberId }
+    });
+
+    if (!member) throw new Error('Membro não encontrado.');
+
+    await prisma.$transaction(async (tx) => {
+      await tx.member.delete({
+        where: { id: memberId }
+      });
+
+      await tx.auditLog.create({
+        data: {
+          action: 'ORGANIZATION_USER_REMOVED',
+          target: member.userId,
+          organizationId: member.organizationId,
+          userId: executorId
+        }
+      });
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error in removeOrganizationMember:', error);
+    const message = error instanceof Error ? error.message : 'Erro ao remover membro da organização.';
     throw new Error(message);
   }
 }

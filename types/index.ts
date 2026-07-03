@@ -6,7 +6,7 @@ export interface Organization {
   name: string;
   cnpj: string;
   planId: PlanType;
-  status: 'active' | 'suspended' | 'trial' | 'pending';
+  status: 'active' | 'suspended' | 'trial' | 'pending' | 'archived';
   logoUrl?: string;
   createdAt: string;
 }

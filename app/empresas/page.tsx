@@ -7,7 +7,14 @@ import {
   getRealOrganizations,
   createRealOrganization,
   updateRealOrganization,
-  resetUserPasswordInDatabase
+  resetUserPasswordInDatabase,
+  archiveRealOrganization,
+  restoreRealOrganization,
+  getOrganizationUsers,
+  createOrganizationUser,
+  updateOrganizationUserRole,
+  resetOrganizationUserPassword,
+  removeOrganizationMember
 } from './actions';
 import { useSession } from '../../lib/auth-client';
 import {
@@ -99,6 +106,55 @@ export default function EmpresasAdminPage() {
   const [activeTab, setActiveTab] = useState<'usuarios' | 'clientes' | 'historico' | 'leads' | 'funcionalidades'>('usuarios');
   const [modalFeedbackMsg, setModalFeedbackMsg] = useState<string | null>(null);
 
+  const [listFilter, setListFilter] = useState<'all' | 'archived'>('all');
+
+  interface OrgUser {
+    memberId: string;
+    userId: string;
+    name: string;
+    email: string;
+    role: 'owner' | 'admin' | 'member' | 'viewer';
+    mustChangePassword: boolean;
+    createdAt: string;
+  }
+
+  const [selectedOrgUsers, setSelectedOrgUsers] = useState<OrgUser[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [showAddUserForm, setShowAddUserForm] = useState(false);
+  const [newUserName, setNewUserName] = useState('');
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserRole, setNewUserRole] = useState<'owner' | 'admin' | 'member' | 'viewer'>('member');
+  const [newUserPassword, setNewUserPassword] = useState('');
+  const [newUserConfirmPassword, setNewUserConfirmPassword] = useState('');
+  const [newUserMustChange, setNewUserMustChange] = useState(true);
+
+  const loadOrgUsers = useCallback(async (orgId: string) => {
+    if (!isDatabaseMode) return;
+    await Promise.resolve();
+    setLoadingUsers(true);
+    try {
+      const users = await getOrganizationUsers(orgId);
+      setSelectedOrgUsers(users);
+    } catch (err) {
+      console.error('Erro ao carregar usuários da organização:', err);
+    } finally {
+      setLoadingUsers(false);
+    }
+  }, [isDatabaseMode]);
+
+  useEffect(() => {
+    if (selectedOrgId && isDatabaseMode) {
+      Promise.resolve().then(() => {
+        loadOrgUsers(selectedOrgId);
+        setShowAddUserForm(false);
+      });
+    } else {
+      Promise.resolve().then(() => {
+        setSelectedOrgUsers([]);
+      });
+    }
+  }, [selectedOrgId, isDatabaseMode, loadOrgUsers]);
+
   // Wizard state variables
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [createStep, setCreateStep] = useState(1);
@@ -162,7 +218,9 @@ export default function EmpresasAdminPage() {
     );
   }
 
-  const activeOrgsList = isDatabaseMode ? realOrgs : organizations;
+  const activeOrgsList = isDatabaseMode
+    ? realOrgs.filter((org) => listFilter === 'archived' ? org.status === 'archived' : org.status !== 'archived')
+    : organizations;
 
   // Aggregate stats
   const totalOrgs = activeOrgsList.length;
@@ -366,16 +424,125 @@ export default function EmpresasAdminPage() {
   };
 
   const handleResetUserPassword = async (userId: string, email: string) => {
-    if (!window.confirm(`Deseja resetar a senha de ${email}? Uma nova senha temporária aleatória será gerada e exibida.`)) {
+    const passwordRaw = window.prompt(`Defina uma nova senha temporária para ${email} (mínimo de 6 caracteres):`);
+    if (passwordRaw === null) return;
+    if (passwordRaw.length < 6) {
+      alert('A senha deve conter no mínimo 6 caracteres.');
       return;
     }
-    const generatedPassword = Math.random().toString(36).substring(2, 10) + 'A1!';
+
     try {
-      await resetUserPasswordInDatabase(userId, generatedPassword);
-      showModalFeedback(`Senha de ${email} resetada! Nova senha temporária: ${generatedPassword}`);
+      if (isDatabaseMode) {
+        await resetOrganizationUserPassword(userId, passwordRaw, true);
+        showModalFeedback(`Senha de ${email} resetada! A troca será exigida no próximo login.`);
+        if (selectedOrgId) await loadOrgUsers(selectedOrgId);
+      } else {
+        await resetUserPasswordInDatabase(userId, passwordRaw);
+        showModalFeedback(`Senha de ${email} resetada com sucesso!`);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Erro ao resetar senha.';
       alert(message);
+    }
+  };
+
+  const handleArchiveOrganization = async (orgId: string, orgName: string) => {
+    const confirmName = window.prompt(`Tem certeza que deseja arquivar esta empresa? Usuários vinculados poderão perder acesso operacional.\n\nPara confirmar, digite o nome exato da empresa "${orgName}":`);
+    if (confirmName !== orgName) {
+      if (confirmName !== null) {
+        alert('Confirmação inválida. O nome digitado não coincide.');
+      }
+      return;
+    }
+
+    try {
+      await archiveRealOrganization(orgId);
+      alert('Empresa arquivada com sucesso!');
+      setSelectedOrgId(null);
+      await loadRealData();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Erro ao arquivar organização.');
+    }
+  };
+
+  const handleRestoreOrganization = async (orgId: string) => {
+    if (!window.confirm('Deseja restaurar esta empresa para o estado ativo?')) {
+      return;
+    }
+
+    try {
+      await restoreRealOrganization(orgId);
+      alert('Empresa restaurada com sucesso!');
+      setSelectedOrgId(null);
+      await loadRealData();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Erro ao restaurar organização.');
+    }
+  };
+
+  const handleRemoveMember = async (memberId: string, name: string) => {
+    if (!window.confirm(`Tem certeza que deseja remover ${name} desta empresa?`)) {
+      return;
+    }
+
+    try {
+      await removeOrganizationMember(memberId);
+      showModalFeedback(`Membro ${name} removido com sucesso.`);
+      if (selectedOrgId) await loadOrgUsers(selectedOrgId);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Erro ao remover membro.');
+    }
+  };
+
+  const handleUpdateMemberRole = async (memberId: string, role: string) => {
+    try {
+      await updateOrganizationUserRole(memberId, role);
+      showModalFeedback('Papel do membro atualizado com sucesso.');
+      if (selectedOrgId) await loadOrgUsers(selectedOrgId);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Erro ao atualizar papel.');
+    }
+  };
+
+  const handleAddUserSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (newUserPassword !== newUserConfirmPassword) {
+      alert('As senhas não coincidem.');
+      return;
+    }
+
+    if (newUserPassword.length < 6) {
+      alert('A senha temporária deve conter no mínimo 6 caracteres.');
+      return;
+    }
+
+    if (!selectedOrgId) return;
+
+    setIsSubmitting(true);
+    try {
+      await createOrganizationUser(selectedOrgId, {
+        name: newUserName,
+        email: newUserEmail,
+        role: newUserRole,
+        passwordRaw: newUserPassword,
+        mustChange: newUserMustChange
+      });
+
+      showModalFeedback('Usuário criado/vinculado com sucesso!');
+      setShowAddUserForm(false);
+      setNewUserName('');
+      setNewUserEmail('');
+      setNewUserRole('member');
+      setNewUserPassword('');
+      setNewUserConfirmPassword('');
+      setNewUserMustChange(true);
+
+      await loadOrgUsers(selectedOrgId);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Erro ao adicionar usuário.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -631,9 +798,31 @@ export default function EmpresasAdminPage() {
 
       {/* Main Companies Table */}
       <Card>
-        <CardHeader className="px-6 py-4 border-b border-border/40">
-          <CardTitle className="text-base font-bold">Empresas Assinantes</CardTitle>
-          <CardDescription>Lista completa de tenants cadastrados no simulador da NV Hub.</CardDescription>
+        <CardHeader className="px-6 py-4 border-b border-border/40 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <CardTitle className="text-base font-bold">Empresas Assinantes</CardTitle>
+            <CardDescription>Lista completa de tenants cadastrados no simulador da NV Hub.</CardDescription>
+          </div>
+          {isDatabaseMode && (
+            <div className="flex gap-2 shrink-0">
+              <Button
+                variant={listFilter === 'all' ? 'primary' : 'outline'}
+                size="sm"
+                className="font-semibold"
+                onClick={() => setListFilter('all')}
+              >
+                Ativas / Suspensas
+              </Button>
+              <Button
+                variant={listFilter === 'archived' ? 'primary' : 'outline'}
+                size="sm"
+                className="font-semibold text-danger border-danger/25 hover:bg-danger/5"
+                onClick={() => setListFilter('archived')}
+              >
+                Arquivadas
+              </Button>
+            </div>
+          )}
         </CardHeader>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
@@ -821,6 +1010,33 @@ export default function EmpresasAdminPage() {
                       )}
                     </div>
                   </div>
+                  {isDatabaseMode && (
+                    <>
+                      <hr className="border-border/40" />
+                      <div className="space-y-2">
+                        <span className="text-muted-foreground block font-bold uppercase tracking-wider text-[10px]">Arquivamento (Lixeira SaaS)</span>
+                        {selectedOrg.status === 'archived' ? (
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            className="w-full gap-1.5 font-bold uppercase"
+                            onClick={() => handleRestoreOrganization(selectedOrg.id)}
+                          >
+                            Restaurar Empresa
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            className="w-full gap-1.5 font-bold uppercase"
+                            onClick={() => handleArchiveOrganization(selectedOrg.id, selectedOrg.name)}
+                          >
+                            Arquivar Empresa
+                          </Button>
+                        )}
+                      </div>
+                    </>
+                  )}
 
                   <hr className="border-border/40" />
 
@@ -982,7 +1198,7 @@ export default function EmpresasAdminPage() {
               <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'usuarios' | 'clientes' | 'historico' | 'leads' | 'funcionalidades')}>
                 <TabsList className="w-full grid grid-cols-2 md:grid-cols-5 gap-1 md:gap-0 bg-transparent md:bg-muted p-1">
                   <TabsTrigger value="usuarios" className="text-[11px] md:text-xs">
-                    <Users className="h-3.5 w-3.5 mr-1 md:mr-1.5" /> Usuários ({isDatabaseMode ? (selectedOrg.users?.length || 0) : teamMembers.filter(m => m.organizationId === selectedOrg.id).length})
+                    <Users className="h-3.5 w-3.5 mr-1 md:mr-1.5" /> Usuários ({isDatabaseMode ? selectedOrgUsers.length : teamMembers.filter(m => m.organizationId === selectedOrg.id).length})
                   </TabsTrigger>
                   <TabsTrigger value="clientes" className="text-[11px] md:text-xs">
                     <Building2 className="h-3.5 w-3.5 mr-1 md:mr-1.5" /> Clientes ({isDatabaseMode ? 0 : clients.filter(c => c.organizationId === selectedOrg.id).length})
@@ -1002,103 +1218,222 @@ export default function EmpresasAdminPage() {
                 <TabsContent value="usuarios" className="pt-3">
                   <Card>
                     <CardContent className="p-0">
+                      {isDatabaseMode && (
+                        <div className="p-4 border-b border-border/40 bg-muted/10 flex items-center justify-between">
+                          <span className="text-xs font-bold text-muted-foreground">Usuários Cadastrados</span>
+                          <Button
+                            variant={showAddUserForm ? 'outline' : 'primary'}
+                            size="sm"
+                            className="font-semibold gap-1"
+                            onClick={() => setShowAddUserForm(!showAddUserForm)}
+                          >
+                            {showAddUserForm ? 'Fechar Formulário' : '+ Adicionar Usuário'}
+                          </Button>
+                        </div>
+                      )}
+
+                      {isDatabaseMode && showAddUserForm && (
+                        <form onSubmit={handleAddUserSubmit} className="p-4 border-b border-border/40 bg-card space-y-3">
+                          <h4 className="text-xs font-bold text-foreground">Novo Usuário do Tenant</h4>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-muted-foreground block uppercase">Nome</label>
+                              <Input
+                                value={newUserName}
+                                onChange={(e) => setNewUserName(e.target.value)}
+                                placeholder="Nome Completo"
+                                required
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-muted-foreground block uppercase">E-mail</label>
+                              <Input
+                                type="email"
+                                value={newUserEmail}
+                                onChange={(e) => setNewUserEmail(e.target.value)}
+                                placeholder="email@dominio.com"
+                                required
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-muted-foreground block uppercase">Senha Temporária</label>
+                              <Input
+                                type="password"
+                                value={newUserPassword}
+                                onChange={(e) => setNewUserPassword(e.target.value)}
+                                placeholder="Mínimo 6 caracteres"
+                                required
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-muted-foreground block uppercase">Confirmar Senha Temporária</label>
+                              <Input
+                                type="password"
+                                value={newUserConfirmPassword}
+                                onChange={(e) => setNewUserConfirmPassword(e.target.value)}
+                                placeholder="Repita a senha"
+                                required
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-muted-foreground block uppercase">Papel na Empresa</label>
+                              <select
+                                value={newUserRole}
+                                onChange={(e) => setNewUserRole(e.target.value as 'owner' | 'admin' | 'member' | 'viewer')}
+                                className="w-full bg-background border border-border rounded-lg px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-1 focus:ring-primary h-9"
+                              >
+                                <option value="owner">Owner / Proprietário</option>
+                                <option value="admin">Admin / Administrador</option>
+                                <option value="member">Member / Membro Operacional</option>
+                                <option value="viewer">Viewer / Visualizador</option>
+                              </select>
+                            </div>
+                            <div className="flex items-center gap-2 pt-5">
+                              <input
+                                type="checkbox"
+                                id="chkMustChange"
+                                checked={newUserMustChange}
+                                onChange={(e) => setNewUserMustChange(e.target.checked)}
+                                className="rounded border-border text-primary focus:ring-primary h-4 w-4"
+                              />
+                              <label htmlFor="chkMustChange" className="text-xs font-semibold text-muted-foreground cursor-pointer select-none">
+                                Exigir troca de senha no primeiro login
+                              </label>
+                            </div>
+                          </div>
+                          <div className="flex justify-end pt-2">
+                            <Button type="submit" variant="primary" size="sm" className="font-semibold" disabled={isSubmitting}>
+                              {isSubmitting ? 'Cadastrando...' : 'Cadastrar Usuário'}
+                            </Button>
+                          </div>
+                        </form>
+                      )}
+
                       <div className="overflow-x-auto">
-                        <table className="w-full text-left border-collapse">
-                          <thead>
-                            <tr className="border-b border-border/40 text-[10px] font-bold text-muted-foreground uppercase bg-muted/20">
-                              <th className="p-3">Nome / E-mail</th>
-                              <th className="p-3">Papel / Função</th>
-                              <th className="p-3">Status</th>
-                              <th className="p-3 text-right">Ações</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-border/20 text-xs">
-                            {((isDatabaseMode ? (selectedOrg.users || []) : teamMembers.filter(m => m.organizationId === selectedOrg.id)) as {
-                              id: string;
-                              name: string;
-                              email?: string;
-                              lastAccess?: string;
-                              role: string;
-                              userRole?: UserRole;
-                              status: string;
-                            }[]).map((user) => (
-                                <tr key={user.id} className="hover:bg-muted/10">
-                                  <td className="p-3">
-                                    <div className="font-bold text-foreground">{user.name}</div>
-                                    <div className="text-[10px] text-muted-foreground">{user.email || 'sem e-mail'}</div>
-                                    <div className="text-[9px] text-muted-foreground font-mono mt-0.5">Último acesso: {user.lastAccess || 'nunca'}</div>
-                                  </td>
-                                  <td className="p-3 space-y-1">
-                                    {isDatabaseMode ? (
-                                      <div className="font-semibold text-foreground uppercase text-[10px] bg-primary/5 border border-primary/10 rounded px-1.5 py-0.5 w-fit">
-                                        {user.role}
-                                      </div>
-                                    ) : (
-                                      <>
-                                        <div className="font-medium text-foreground">{user.role}</div>
+                        {loadingUsers ? (
+                          <div className="py-6 text-center text-xs text-muted-foreground font-semibold">Carregando usuários...</div>
+                        ) : (
+                          <table className="w-full text-left border-collapse">
+                            <thead>
+                              <tr className="border-b border-border/40 text-[10px] font-bold text-muted-foreground uppercase bg-muted/20">
+                                <th className="p-3">Nome / E-mail</th>
+                                <th className="p-3">Papel / Função</th>
+                                <th className="p-3">Status</th>
+                                <th className="p-3 text-right">Ações</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-border/20 text-xs">
+                              {((isDatabaseMode ? selectedOrgUsers : teamMembers.filter(m => m.organizationId === selectedOrg.id)) as {
+                                id?: string;
+                                memberId?: string;
+                                userId?: string;
+                                name: string;
+                                email?: string;
+                                lastAccess?: string;
+                                role: string;
+                                userRole?: UserRole;
+                                status?: string;
+                                mustChangePassword?: boolean;
+                              }[]).map((user) => {
+                                const uid = isDatabaseMode ? user.userId! : user.id!;
+                                return (
+                                  <tr key={uid} className="hover:bg-muted/10">
+                                    <td className="p-3">
+                                      <div className="font-bold text-foreground">{user.name}</div>
+                                      <div className="text-[10px] text-muted-foreground">{user.email || 'sem e-mail'}</div>
+                                    </td>
+                                    <td className="p-3 space-y-1">
+                                      {isDatabaseMode ? (
                                         <select
-                                          value={user.userRole}
-                                          onChange={(e) => updateTeamMemberRole(user.id, e.target.value as UserRole)}
-                                          className="bg-background border border-border rounded px-1.5 py-0.5 text-[10px] font-semibold text-foreground focus:outline-none focus:ring-1 focus:ring-primary animate-none"
+                                          value={user.role}
+                                          onChange={(e) => handleUpdateMemberRole(user.memberId!, e.target.value)}
+                                          className="bg-background border border-border rounded px-1.5 py-0.5 text-[10px] font-semibold text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                                         >
                                           <option value="owner">Owner</option>
                                           <option value="admin">Admin</option>
                                           <option value="member">Member</option>
                                           <option value="viewer">Viewer</option>
                                         </select>
-                                      </>
-                                    )}
-                                  </td>
-                                  <td className="p-3">
-                                    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
-                                      user.status === 'active' ? 'bg-success/10 text-success' :
-                                      user.status === 'pending' ? 'bg-warning/10 text-warning' :
-                                      'bg-danger/10 text-danger'
-                                    }`}>
-                                      {user.status === 'active' ? 'Ativo' :
-                                       user.status === 'pending' ? 'Pendente' : 'Desativado'}
-                                    </span>
-                                  </td>
-                                  <td className="p-3 text-right">
-                                    <div className="flex flex-col gap-1 items-end">
-                                      {isDatabaseMode ? (
-                                        <button
-                                          type="button"
-                                          onClick={() => handleResetUserPassword(user.id, user.email || '')}
-                                          className="text-[10px] font-bold text-accent-cool hover:underline flex items-center gap-0.5"
-                                        >
-                                          <Settings className="h-3 w-3" /> Resetar Senha
-                                        </button>
                                       ) : (
                                         <>
-                                          <button
-                                            type="button"
-                                            onClick={() => updateTeamMemberStatus(user.id, user.status === 'disabled' ? 'active' : 'disabled')}
-                                            className={`text-[10px] font-bold flex items-center gap-0.5 ${
-                                              user.status === 'disabled' ? 'text-success hover:underline' : 'text-danger hover:underline'
-                                            }`}
+                                          <div className="font-medium text-foreground">{user.role}</div>
+                                          <select
+                                            value={user.userRole}
+                                            onChange={(e) => updateTeamMemberRole(uid, e.target.value as UserRole)}
+                                            className="bg-background border border-border rounded px-1.5 py-0.5 text-[10px] font-semibold text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                                           >
-                                            {user.status === 'disabled' ? (
-                                              <><UserCheck className="h-3.5 w-3.5" /> Ativar</>
-                                            ) : (
-                                              <><UserX className="h-3.5 w-3.5" /> Desativar</>
-                                            )}
-                                          </button>
-                                          <button
-                                            type="button"
-                                            onClick={() => handleResendInvite(user.name, user.email || '')}
-                                            className="text-[10px] font-bold text-primary hover:underline flex items-center gap-0.5"
-                                          >
-                                            <Send className="h-3.5 w-3.5" /> Reenviar convite
-                                          </button>
+                                            <option value="owner">Owner</option>
+                                            <option value="admin">Admin</option>
+                                            <option value="member">Member</option>
+                                            <option value="viewer">Viewer</option>
+                                          </select>
                                         </>
                                       )}
-                                    </div>
-                                  </td>
-                                </tr>
-                              ))}
-                          </tbody>
-                        </table>
+                                    </td>
+                                    <td className="p-3">
+                                      {isDatabaseMode && user.mustChangePassword ? (
+                                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-warning/15 text-warning">
+                                          Troca Obrigatória
+                                        </span>
+                                      ) : (
+                                        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${
+                                          (isDatabaseMode ? 'active' : user.status) === 'active' ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'
+                                        }`}>
+                                          {(isDatabaseMode ? 'active' : user.status) === 'active' ? 'Ativo' : 'Desativado'}
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td className="p-3 text-right">
+                                      <div className="flex flex-col gap-1 items-end">
+                                        {isDatabaseMode ? (
+                                          <>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleResetUserPassword(uid, user.email || '')}
+                                              className="text-[10px] font-bold text-accent-cool hover:underline flex items-center gap-0.5"
+                                            >
+                                              <Settings className="h-3 w-3" /> Resetar Senha
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleRemoveMember(user.memberId!, user.name)}
+                                              className="text-[10px] font-bold text-danger hover:underline flex items-center gap-0.5 mt-1"
+                                            >
+                                              <UserX className="h-3.5 w-3.5" /> Remover
+                                            </button>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <button
+                                              type="button"
+                                              onClick={() => updateTeamMemberStatus(uid, user.status === 'disabled' ? 'active' : 'disabled')}
+                                              className={`text-[10px] font-bold flex items-center gap-0.5 ${
+                                                user.status === 'disabled' ? 'text-success hover:underline' : 'text-danger hover:underline'
+                                              }`}
+                                            >
+                                              {user.status === 'disabled' ? (
+                                                <><UserCheck className="h-3.5 w-3.5" /> Ativar</>
+                                              ) : (
+                                                <><UserX className="h-3.5 w-3.5" /> Desativar</>
+                                              )}
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleResendInvite(user.name, user.email || '')}
+                                              className="text-[10px] font-bold text-primary hover:underline flex items-center gap-0.5"
+                                            >
+                                              <Send className="h-3.5 w-3.5" /> Reenviar convite
+                                            </button>
+                                          </>
+                                        )}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        )}
                       </div>
                     </CardContent>
                   </Card>

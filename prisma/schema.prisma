@@ -10,20 +10,22 @@ generator client {
 // --- Better Auth Core Models ---
 
 model User {
-  id            String       @id @default(uuid())
-  name          String
-  email         String       @unique
-  emailVerified Boolean      @default(false)
-  image         String?
-  platformRole  String?      // "platform_admin", "operator"
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  sessions      Session[]
-  accounts      Account[]
-  memberships   Member[]
-  auditLogs     AuditLog[]
-  assignedTasks Task[]     @relation("TaskAssignedUser")
-  taskNotes     TaskNote[] @relation("TaskNoteAuthor")
+  id                 String       @id @default(uuid())
+  name               String
+  email              String       @unique
+  emailVerified      Boolean      @default(false)
+  image              String?
+  platformRole       String?      // "platform_admin", "operator"
+  mustChangePassword Boolean      @default(false)
+  passwordChangedAt  DateTime?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  sessions           Session[]
+  accounts           Account[]
+  memberships        Member[]
+  auditLogs          AuditLog[]
+  assignedTasks      Task[]     @relation("TaskAssignedUser")
+  taskNotes          TaskNote[] @relation("TaskNoteAuthor")
 
   @@map("user")
 }
@@ -82,6 +84,8 @@ model Organization {
   logo        String?
   planId      String                @default("starter") // "starter", "pro", "enterprise"
   isActive    Boolean               @default(true)
+  archivedAt  DateTime?
+  archivedBy  String?
   createdAt   DateTime              @default(now())
   updatedAt   DateTime              @updatedAt
   members     Member[]
