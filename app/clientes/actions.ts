@@ -1,7 +1,7 @@
 'use server';
 
 import prisma from '../../lib/prisma';
-import { getSession, validateTenantAccess } from '../../lib/tenant';
+import { getSession, validateTenantAccess, getActiveOrganizationId } from '../../lib/tenant';
 import { isDatabaseDataMode } from '../../lib/data-mode';
 import type { Client, ClientStatus } from '../../types';
 
@@ -48,28 +48,28 @@ function mapDbClientToClient(dbClient: {
 export async function getClients(includeArchived = false): Promise<Client[]> {
   if (!isDatabaseDataMode) return [];
 
-  const session = await getSession();
-  if (!session || !session.session.activeOrganizationId) {
-    throw new Error('Não autorizado: Organização ativa não selecionada.');
+  try {
+    const activeOrgId = await getActiveOrganizationId();
+    await Promise.all([
+      validateTenantAccess(activeOrgId),
+      checkClientsFeature(activeOrgId),
+    ]);
+
+    const dbClients = await prisma.client.findMany({
+      where: {
+        organizationId: activeOrgId,
+        ...(includeArchived ? {} : { status: { not: 'archived' } }),
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    return dbClients.map(mapDbClientToClient);
+  } catch (err) {
+    console.error('Error fetching clients:', err);
+    return [];
   }
-
-  const activeOrgId = session.session.activeOrganizationId;
-  await Promise.all([
-    validateTenantAccess(activeOrgId),
-    checkClientsFeature(activeOrgId),
-  ]);
-
-  const dbClients = await prisma.client.findMany({
-    where: {
-      organizationId: activeOrgId,
-      ...(includeArchived ? {} : { status: { not: 'archived' } }),
-    },
-    orderBy: {
-      createdAt: 'desc',
-    },
-  });
-
-  return dbClients.map(mapDbClientToClient);
 }
 
 export async function createClient(data: {
@@ -88,11 +88,11 @@ export async function createClient(data: {
 
   try {
     const session = await getSession();
-    if (!session || !session.session.activeOrganizationId) {
-      return { success: false, error: 'Não autorizado: Organização ativa não selecionada.' };
+    if (!session) {
+      return { success: false, error: 'Não autorizado: Sessão não encontrada.' };
     }
 
-    const activeOrgId = session.session.activeOrganizationId;
+    const activeOrgId = await getActiveOrganizationId(session);
     const executorId = session.user.id;
     await validateTenantAccess(activeOrgId);
     await checkClientsFeature(activeOrgId);
@@ -185,11 +185,11 @@ export async function updateClient(
 
   try {
     const session = await getSession();
-    if (!session || !session.session.activeOrganizationId) {
-      return { success: false, error: 'Não autorizado: Organização ativa não selecionada.' };
+    if (!session) {
+      return { success: false, error: 'Não autorizado: Sessão não encontrada.' };
     }
 
-    const activeOrgId = session.session.activeOrganizationId;
+    const activeOrgId = await getActiveOrganizationId(session);
     const executorId = session.user.id;
     await validateTenantAccess(activeOrgId);
     await checkClientsFeature(activeOrgId);
@@ -252,11 +252,11 @@ export async function archiveClient(id: string): Promise<{ success: boolean; dat
 
   try {
     const session = await getSession();
-    if (!session || !session.session.activeOrganizationId) {
-      return { success: false, error: 'Não autorizado: Organização ativa não selecionada.' };
+    if (!session) {
+      return { success: false, error: 'Não autorizado: Sessão não encontrada.' };
     }
 
-    const activeOrgId = session.session.activeOrganizationId;
+    const activeOrgId = await getActiveOrganizationId(session);
     const executorId = session.user.id;
     await validateTenantAccess(activeOrgId);
 
@@ -302,11 +302,11 @@ export async function restoreClient(id: string): Promise<{ success: boolean; dat
 
   try {
     const session = await getSession();
-    if (!session || !session.session.activeOrganizationId) {
-      return { success: false, error: 'Não autorizado: Organização ativa não selecionada.' };
+    if (!session) {
+      return { success: false, error: 'Não autorizado: Sessão não encontrada.' };
     }
 
-    const activeOrgId = session.session.activeOrganizationId;
+    const activeOrgId = await getActiveOrganizationId(session);
     const executorId = session.user.id;
     await validateTenantAccess(activeOrgId);
 
@@ -342,5 +342,39 @@ export async function restoreClient(id: string): Promise<{ success: boolean; dat
       success: false,
       error: error instanceof Error ? error.message : 'Erro ao restaurar cliente.'
     };
+  }
+}
+
+export async function getTenantMembers(): Promise<{ id: string; name: string }[]> {
+  if (!isDatabaseDataMode) return [];
+
+  try {
+    const activeOrgId = await getActiveOrganizationId();
+    await validateTenantAccess(activeOrgId);
+
+    const members = await prisma.member.findMany({
+      where: { organizationId: activeOrgId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'asc',
+      },
+    });
+
+    return members
+      .map((m) => ({
+        id: m.user.id,
+        name: m.user.name || 'Sem nome',
+      }))
+      .filter((u) => u.name);
+  } catch (error) {
+    console.error('Error fetching tenant members:', error);
+    return [];
   }
 }

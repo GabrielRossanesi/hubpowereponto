@@ -1,7 +1,7 @@
 'use server';
 
 import prisma from './prisma';
-import { getSession } from './tenant';
+import { getSession, getOrResolveActiveOrganizationId } from './tenant';
 import { isDatabaseDataMode } from './data-mode';
 import type { Organization, OrganizationFeatures, PlanType, UserRole } from '../types';
 
@@ -54,13 +54,19 @@ export async function getCurrentDatabaseTenantContext(): Promise<DatabaseTenantC
   const session = await getSession();
   if (!session) return null;
 
-  const preferredOrganizationId = session.session.activeOrganizationId || undefined;
+  let preferredOrganizationId: string;
+  try {
+    preferredOrganizationId = await getOrResolveActiveOrganizationId(session);
+  } catch (err) {
+    console.error('Error resolving active organization in context:', err);
+    return null;
+  }
 
   const [membership, user] = await Promise.all([
     prisma.member.findFirst({
       where: {
         userId: session.user.id,
-        ...(preferredOrganizationId ? { organizationId: preferredOrganizationId } : {}),
+        organizationId: preferredOrganizationId,
       },
       include: {
         organization: {

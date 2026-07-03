@@ -58,7 +58,7 @@ export async function getSession(): Promise<TenantSession | null> {
 
     if (!sessionData) return null;
 
-    return {
+    const tenantSession: TenantSession = {
       user: {
         id: sessionData.user.id,
         name: sessionData.user.name,
@@ -73,6 +73,14 @@ export async function getSession(): Promise<TenantSession | null> {
         activeOrganizationId: (sessionData.session as Record<string, unknown>).activeOrganizationId as string | null,
       },
     };
+
+    try {
+      await getOrResolveActiveOrganizationId(tenantSession);
+    } catch (err) {
+      console.warn('Could not auto-resolve active organization for session:', err instanceof Error ? err.message : err);
+    }
+
+    return tenantSession;
   } catch (error) {
     console.error('Error fetching Better Auth session:', error);
     return null;
@@ -108,6 +116,11 @@ export async function validateTenantAccess(organizationId: string): Promise<Tena
         userId: session.user.id,
       },
     },
+    include: {
+      organization: {
+        select: { id: true, isActive: true, archivedAt: true },
+      },
+    },
   });
 
   if (!member) {
@@ -127,6 +140,14 @@ export async function validateTenantAccess(organizationId: string): Promise<Tena
       organizationId,
       userId: session.user.id,
     };
+  }
+
+  if (member.organization.archivedAt) {
+    throw new Error('Sua organização está arquivada. Entre em contato com o suporte.');
+  }
+
+  if (!member.organization.isActive) {
+    throw new Error('Sua organização está suspensa. Entre em contato com o suporte.');
   }
 
   return {
@@ -149,4 +170,112 @@ export async function isOperator(): Promise<boolean> {
   });
 
   return user?.platformRole === 'operator' || user?.platformRole === 'platform_admin';
+}
+
+/**
+ * Resolves the active organization ID for the user's session, setting it automatically if missing.
+ */
+export async function getOrResolveActiveOrganizationId(session: TenantSession): Promise<string> {
+  if (!isDatabaseMode) {
+    return 'org_hub_power';
+  }
+
+  const userId = session.user.id;
+  const currentActiveId = session.session.activeOrganizationId;
+
+  // 1. If we already have an active org ID in the session, verify if it's still valid (not archived)
+  if (currentActiveId) {
+    const org = await prisma.organization.findUnique({
+      where: { id: currentActiveId },
+      select: { id: true, isActive: true, archivedAt: true },
+    });
+
+    if (org && !org.archivedAt) {
+      if (!org.isActive) {
+        throw new Error('Sua organização está suspensa. Entre em contato com o suporte.');
+      }
+      return org.id;
+    }
+  }
+
+  // 2. If it's missing or invalid/archived, find the first active, non-archived membership
+  const memberships = await prisma.member.findMany({
+    where: {
+      userId,
+      organization: {
+        archivedAt: null,
+      },
+    },
+    include: {
+      organization: {
+        select: { id: true, isActive: true, archivedAt: true },
+      },
+    },
+    orderBy: {
+      createdAt: 'asc',
+    },
+  });
+
+  // Filter out any suspended ones if we can, but if they are all suspended we will throw the suspended error
+  const activeMemberships = memberships.filter(m => m.organization.isActive);
+  
+  if (activeMemberships.length > 0) {
+    const resolvedOrgId = activeMemberships[0].organizationId;
+
+    // Persist in session
+    await prisma.session.update({
+      where: { id: session.session.id },
+      data: { activeOrganizationId: resolvedOrgId },
+    });
+
+    // Mutate the session object in-memory so the caller gets the updated value
+    session.session.activeOrganizationId = resolvedOrgId;
+    return resolvedOrgId;
+  }
+
+  // If we only have suspended memberships
+  if (memberships.length > 0) {
+    throw new Error('Sua organização está suspensa. Entre em contato com o suporte.');
+  }
+
+  // If no membership at all, check if user is operator
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { platformRole: true },
+  });
+
+  const isOperatorUser = user?.platformRole === 'operator' || user?.platformRole === 'platform_admin';
+  if (isOperatorUser) {
+    // For operators, if they don't have an active organization, we can default to the admin org
+    const adminOrg = await prisma.organization.findFirst({
+      where: { slug: 'nv-hub-admin', archivedAt: null },
+    });
+    if (adminOrg) {
+      await prisma.session.update({
+        where: { id: session.session.id },
+        data: { activeOrganizationId: adminOrg.id },
+      });
+      session.session.activeOrganizationId = adminOrg.id;
+      return adminOrg.id;
+    }
+  }
+
+  throw new Error('Usuário não está vinculado a nenhuma organização ativa.');
+}
+
+/**
+ * Resolves the active organization ID from the session, auto-setting it if missing.
+ * Throws an Error if no valid active organization is found.
+ */
+export async function getActiveOrganizationId(providedSession?: TenantSession | null): Promise<string> {
+  if (!isDatabaseMode) {
+    return 'org_hub_power';
+  }
+
+  const session = providedSession || (await getSession());
+  if (!session) {
+    throw new Error('Não autorizado: Sessão não encontrada.');
+  }
+
+  return getOrResolveActiveOrganizationId(session);
 }

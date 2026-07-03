@@ -17,7 +17,7 @@ import StatusBadge from '../../components/ui/status-badge';
 import EmptyState from '../../components/ui/empty-state';
 import { ClientStatus, Client } from '../../types';
 import { isDatabaseDataMode } from '../../lib/data-mode';
-import { getClients, createClient, updateClient, archiveClient, restoreClient } from './actions';
+import { getClients, createClient, updateClient, archiveClient, restoreClient, getTenantMembers } from './actions';
 
 export default function ClientesPage() {
   const mounted = useMounted();
@@ -28,6 +28,7 @@ export default function ClientesPage() {
 
   // Database States
   const [dbClients, setDbClients] = useState<Client[]>([]);
+  const [dbMembers, setDbMembers] = useState<{ id: string; name: string }[]>([]);
   const [isLoading, setIsLoading] = useState(isDatabaseMode);
 
   // Common UI States
@@ -54,10 +55,14 @@ export default function ClientesPage() {
   const loadClients = useCallback(async () => {
     if (!isDatabaseMode) return;
     try {
-      const fetched = await getClients(true); // Include archived for client-side status filtering
-      setDbClients(fetched);
+      const [fetchedClients, fetchedMembers] = await Promise.all([
+        getClients(true), // Include archived for client-side status filtering
+        getTenantMembers(),
+      ]);
+      setDbClients(fetchedClients);
+      setDbMembers(fetchedMembers);
     } catch (err) {
-      console.error('Erro ao carregar clientes:', err);
+      console.error('Erro ao carregar dados do inquilino:', err);
     } finally {
       setIsLoading(false);
     }
@@ -68,13 +73,17 @@ export default function ClientesPage() {
     if (isDatabaseMode) {
       const fetchInitial = async () => {
         try {
-          const fetched = await getClients(true);
+          const [fetchedClients, fetchedMembers] = await Promise.all([
+            getClients(true),
+            getTenantMembers(),
+          ]);
           if (active) {
-            setDbClients(fetched);
+            setDbClients(fetchedClients);
+            setDbMembers(fetchedMembers);
             setIsLoading(false);
           }
         } catch (err) {
-          console.error('Erro ao carregar clientes inicialmente:', err);
+          console.error('Erro ao carregar dados do inquilino inicialmente:', err);
           if (active) setIsLoading(false);
         }
       };
@@ -149,7 +158,10 @@ export default function ClientesPage() {
     setCnpj('');
     setTelefone('');
     setEmail('');
-    setResponsavel('Ana Silva');
+    const defaultResponsavel = isDatabaseMode
+      ? (dbMembers[0]?.name || '')
+      : 'Ana Silva';
+    setResponsavel(defaultResponsavel);
     setStatus('lead');
     setObservacoes('');
     setCnpjSearchMessage('');
@@ -281,7 +293,11 @@ export default function ClientesPage() {
     }
   };
 
-  const teamOptions = sandboxStore.teamMembers.map(m => ({ value: m.name, label: m.name }));
+  const teamOptions = isDatabaseMode
+    ? (dbMembers.length > 0 
+        ? dbMembers.map(m => ({ value: m.name, label: m.name }))
+        : [{ value: '', label: 'Nenhum usuário encontrado nesta empresa' }])
+    : sandboxStore.teamMembers.map(m => ({ value: m.name, label: m.name }));
   const statusOptions = isDatabaseMode
     ? [
         { value: 'lead', label: 'Lead' },
