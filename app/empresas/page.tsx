@@ -482,6 +482,9 @@ export default function EmpresasAdminPage() {
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Erro ao criar organização.';
         alert(message);
+        return;
+      } finally {
+        setIsSubmitting(false);
       }
     } else {
       createOrganization({
@@ -1956,9 +1959,10 @@ export default function EmpresasAdminPage() {
                 <Button
                   variant="primary"
                   onClick={handleCreateCompanySubmit}
+                  disabled={isSubmitting}
                   className="gap-1.5 bg-success hover:bg-success/90 border-success text-success-foreground"
                 >
-                  <Check className="h-4 w-4" /> Criar Empresa
+                  <Check className="h-4 w-4" /> {isSubmitting ? 'Criando...' : 'Criar Empresa'}
                 </Button>
               </div>
             </div>

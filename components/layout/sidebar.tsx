@@ -12,6 +12,9 @@ import {
 import Button from '../ui/button';
 import { useTenantStore, getPlanDefaultFeatures } from '../../lib/store';
 import { useMounted } from '../../hooks/useMounted';
+import { useDatabaseTenantContext } from '../../hooks/useDatabaseTenantContext';
+import { isDatabaseDataMode } from '../../lib/data-mode';
+import { useSession } from '../../lib/auth-client';
 import { LogoSidebar } from '../ui/logo';
 
 interface MenuItem {
@@ -31,6 +34,9 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const pathname = usePathname();
   const store = useTenantStore();
   const hasMounted = useMounted();
+  const { context: databaseTenantContext } = useDatabaseTenantContext();
+  const { data: session } = useSession();
+  const isDatabaseMode = isDatabaseDataMode;
 
   const [orgDropdownOpen, setOrgDropdownOpen] = useState(false);
 
@@ -73,14 +79,35 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
 
   // Stable server defaults to prevent hydration mismatch
   const isSidebarCollapsed = hasMounted ? store.isSidebarCollapsed : false;
-  const currentOrganizationId = hasMounted ? store.currentOrganizationId : 'org_hub_power';
-  const currentFeatures = hasMounted ? store.currentFeatures : getPlanDefaultFeatures('pro');
-  const currentUser = hasMounted
+  const currentOrganizationId = hasMounted
+    ? (isDatabaseMode ? databaseTenantContext?.organization.id || '' : store.currentOrganizationId)
+    : 'org_hub_power';
+  const currentFeatures = hasMounted
+    ? (isDatabaseMode ? databaseTenantContext?.features || getPlanDefaultFeatures('pro') : store.currentFeatures)
+    : getPlanDefaultFeatures('pro');
+  const sandboxUser = hasMounted
     ? store.currentUser
     : store.teamMembers?.find(m => m.organizationId === 'org_hub_power') || store.teamMembers?.[0];
-  const organizations = store.organizations || [];
+  const organizations = isDatabaseMode
+    ? (databaseTenantContext ? [databaseTenantContext.organization] : [])
+    : store.organizations || [];
   const toggleSidebar = store.toggleSidebar;
   const setCurrentOrganizationId = store.setCurrentOrganizationId;
+  const displayUserName = isDatabaseMode
+    ? session?.user?.name || 'Usuário'
+    : sandboxUser?.name || 'Usuário';
+  const displayUserRole = isDatabaseMode
+    ? databaseTenantContext?.membershipRole || 'member'
+    : sandboxUser?.role || 'Membro';
+  const displayUserPermission = isDatabaseMode
+    ? databaseTenantContext?.membershipRole
+    : sandboxUser?.userRole;
+  const displayUserInitials = displayUserName
+    .split(' ')
+    .map((part) => part[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase() || 'US';
 
   // Filter items based on features active in the tenant's plan
   const filterMenuItems = (items: MenuItem[]) => {
@@ -168,7 +195,8 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
               </button>
               {/* Tooltip */}
               <div className="absolute left-full ml-3 top-1/2 -translate-y-1/2 px-2.5 py-1.5 bg-card/95 backdrop-blur-md text-card-foreground text-[10px] font-bold rounded-lg border border-border/30 shadow-2xl whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 ease-out transform scale-90 -translate-x-1 group-hover:scale-100 group-hover:translate-x-0 z-50">
-                {currentOrg?.name} <span className="text-primary/80 font-normal ml-0.5">(Simulador)</span>
+                {currentOrg?.name}
+                {!isDatabaseMode && <span className="text-primary/80 font-normal ml-0.5">(Simulador)</span>}
               </div>
 
               {/* Floating Dropdown List */}
@@ -184,6 +212,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                         key={org.id}
                         type="button"
                         onClick={() => {
+                          if (isDatabaseMode) return;
                           setCurrentOrganizationId?.(org.id);
                           setOrgDropdownOpen(false);
                         }}
@@ -203,12 +232,17 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5 px-1.5 text-[8px] font-bold text-primary uppercase tracking-widest select-none">
                 <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
-                Simulador de Tenant
+                {isDatabaseMode ? 'Organização ativa' : 'Simulador de Tenant'}
               </div>
               <div className="relative">
                 <select
                   value={currentOrganizationId || ''}
-                  onChange={(e) => setCurrentOrganizationId?.(e.target.value)}
+                  onChange={(e) => {
+                    if (!isDatabaseMode) {
+                      setCurrentOrganizationId?.(e.target.value);
+                    }
+                  }}
+                  disabled={isDatabaseMode}
                   className="w-full h-8.5 pl-2.5 pr-8 rounded-lg bg-background/50 border border-border/40 text-xs font-bold text-foreground/80 focus:outline-none focus:ring-1 focus:ring-primary/45 focus:border-primary/40 cursor-pointer transition-all"
                   title="Alternar Organização Assinante"
                 >
@@ -306,17 +340,17 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
           {isSidebarCollapsed ? (
             <div className="relative group">
               <div className="h-9 w-9 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center font-bold text-primary text-xs uppercase shrink-0 hover:scale-105 transition-transform cursor-pointer">
-                {String(currentUser?.name || 'US').slice(0, 2)}
+                {displayUserInitials}
               </div>
 
               {/* Tooltip info */}
               <div className="absolute left-full ml-3 bottom-0 px-3 py-2 bg-card/95 backdrop-blur-md text-card-foreground text-[10px] font-bold rounded-lg border border-border/30 shadow-2xl opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 ease-out transform scale-90 -translate-x-1 group-hover:scale-100 group-hover:translate-x-0 z-50 min-w-44">
-                <div className="text-foreground font-black text-xs leading-none">{currentUser?.name}</div>
+                <div className="text-foreground font-black text-xs leading-none">{displayUserName}</div>
                 <div className="text-muted-foreground text-[9px] font-bold leading-normal mt-1 flex items-center gap-1.5">
-                  <span>{currentUser?.role}</span>
-                  {currentUser?.userRole === 'admin' && (
+                  <span>{displayUserRole}</span>
+                  {displayUserPermission === 'admin' && (
                     <span className="text-[7.5px] text-primary bg-primary/10 border border-primary/20 px-1 rounded uppercase font-black tracking-wider">
-                      {currentUser.userRole}
+                      {displayUserPermission}
                     </span>
                   )}
                 </div>
@@ -325,15 +359,15 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
           ) : (
             <div className="flex items-center gap-3 px-2 py-2 rounded-xl bg-muted/15 border border-border/10 w-full animate-in fade-in duration-200">
               <div className="h-9 w-9 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center font-black text-primary text-xs uppercase shrink-0 select-none">
-                {String(currentUser?.name || 'US').slice(0, 2)}
+                {displayUserInitials}
               </div>
               <div className="flex flex-col min-w-0">
-                <span className="text-xs font-black truncate text-foreground/90 leading-none">{currentUser?.name || 'Usuário'}</span>
+                <span className="text-xs font-black truncate text-foreground/90 leading-none">{displayUserName}</span>
                 <span className="text-[9px] text-muted-foreground truncate leading-tight mt-1 flex items-center gap-1">
-                  {currentUser?.role || 'Membro'}
+                  {displayUserRole}
                 </span>
               </div>
-              {currentUser?.userRole === 'admin' && (
+              {displayUserPermission === 'admin' && (
                 <span className="ml-auto bg-primary/10 text-primary border border-primary/20 text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider scale-90 select-none">
                   Admin
                 </span>

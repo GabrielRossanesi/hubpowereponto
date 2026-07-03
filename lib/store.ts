@@ -14,6 +14,7 @@ import {
   OrganizationFeatures,
   FinancialEntry, FinancialRecurrence
 } from '../types';
+import { isDatabaseDataMode } from './data-mode';
 
 export const getPlanDefaultFeatures = (planId: PlanType): Omit<OrganizationFeatures, 'organizationId'> => {
   switch (planId) {
@@ -3385,23 +3386,24 @@ export function useTenantStore() {
     organizationId: currentOrgId,
     ...getPlanDefaultFeatures(currentOrg?.planId || 'starter')
   };
+  const sandboxOperationalData = !isDatabaseDataMode;
 
   return {
     ...store,
     currentOrganization: currentOrg,
     currentFeatures,
     currentIntegration: store.integrations.find(i => i.organizationId === currentOrgId) || store.integrations[0],
-    clients: store.clients.filter(c => c.organizationId === currentOrgId),
-    proposals: store.proposals.filter(p => p.organizationId === currentOrgId),
-    contracts: store.contracts.filter(c => c.organizationId === currentOrgId),
-    charges: store.charges.filter(c => c.organizationId === currentOrgId),
-    onboardings: store.onboardings.filter(o => o.organizationId === currentOrgId),
-    publications: store.publications.filter(p => p.organizationId === currentOrgId),
-    tasks: store.tasks.filter(t => t.organizationId === currentOrgId),
-    historyEvents: store.historyEvents.filter(h => h.organizationId === currentOrgId),
-    teamMembers: store.teamMembers.filter(m => m.organizationId === currentOrgId),
-    leads: store.leads.filter(l => l.organizationId === currentOrgId),
-    financialEntries: store.financialEntries.filter(f => f.organizationId === currentOrgId),
-    financialRecurrences: store.financialRecurrences.filter(f => f.organizationId === currentOrgId),
+    clients: sandboxOperationalData ? store.clients.filter(c => c.organizationId === currentOrgId) : [],
+    proposals: sandboxOperationalData ? store.proposals.filter(p => p.organizationId === currentOrgId) : [],
+    contracts: sandboxOperationalData ? store.contracts.filter(c => c.organizationId === currentOrgId) : [],
+    charges: sandboxOperationalData ? store.charges.filter(c => c.organizationId === currentOrgId) : [],
+    onboardings: sandboxOperationalData ? store.onboardings.filter(o => o.organizationId === currentOrgId) : [],
+    publications: sandboxOperationalData ? store.publications.filter(p => p.organizationId === currentOrgId) : [],
+    tasks: sandboxOperationalData ? store.tasks.filter(t => t.organizationId === currentOrgId) : [],
+    historyEvents: sandboxOperationalData ? store.historyEvents.filter(h => h.organizationId === currentOrgId) : [],
+    teamMembers: sandboxOperationalData ? store.teamMembers.filter(m => m.organizationId === currentOrgId) : [],
+    leads: sandboxOperationalData ? store.leads.filter(l => l.organizationId === currentOrgId) : [],
+    financialEntries: sandboxOperationalData ? store.financialEntries.filter(f => f.organizationId === currentOrgId) : [],
+    financialRecurrences: sandboxOperationalData ? store.financialRecurrences.filter(f => f.organizationId === currentOrgId) : [],
   };
 }

@@ -9,6 +9,8 @@ import {
 } from 'lucide-react';
 import { useTenantStore } from '../../lib/store';
 import { useMounted } from '../../hooks/useMounted';
+import { useDatabaseTenantContext } from '../../hooks/useDatabaseTenantContext';
+import { isDatabaseDataMode } from '../../lib/data-mode';
 import PageHeader from '../../components/ui/page-header';
 import Sparkline from '../../components/ui/sparkline';
 import Card, { CardHeader, CardTitle, CardContent } from '../../components/ui/card';
@@ -64,6 +66,39 @@ function getSparklinePoints<T>(
   return points;
 }
 
+function formatCurrency(value: number) {
+  return value.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+}
+
+function EmptyState({
+  icon: Icon,
+  title,
+  description,
+  href,
+  actionLabel,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  description: string;
+  href?: string;
+  actionLabel?: string;
+}) {
+  return (
+    <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border/60 bg-muted/10 px-6 py-8 text-center">
+      <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+        <Icon className="h-5 w-5" />
+      </div>
+      <p className="text-sm font-semibold text-foreground">{title}</p>
+      <p className="mt-1 max-w-sm text-xs leading-relaxed text-muted-foreground">{description}</p>
+      {href && actionLabel && (
+        <Link href={href} className="mt-4 inline-flex items-center gap-1 text-xs font-bold text-primary hover:underline">
+          {actionLabel} <ArrowRight className="h-3 w-3" />
+        </Link>
+      )}
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const mounted = useMounted();
   const {
@@ -71,8 +106,20 @@ export default function DashboardPage() {
     publications, tasks, historyEvents, clients,
     currentOrganization, currentFeatures, financialEntries
   } = useTenantStore();
+  const {
+    context: databaseTenantContext,
+    isLoading: isTenantContextLoading,
+    error: tenantContextError,
+  } = useDatabaseTenantContext();
+  const isDatabaseMode = isDatabaseDataMode;
+  const dashboardOrganization = isDatabaseMode
+    ? databaseTenantContext?.organization
+    : currentOrganization;
+  const dashboardFeatures = isDatabaseMode
+    ? databaseTenantContext?.features
+    : currentFeatures;
 
-  if (!mounted) {
+  if (!mounted || (isDatabaseMode && isTenantContextLoading)) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-primary" />
@@ -81,17 +128,17 @@ export default function DashboardPage() {
   }
 
   // Feature flags
-  const showLeads = currentFeatures ? currentFeatures.leads !== false : true;
-  const showClients = currentFeatures ? currentFeatures.clients !== false : true;
-  const showProposals = currentFeatures ? currentFeatures.proposals !== false : true;
-  const showContracts = currentFeatures ? currentFeatures.contracts !== false : true;
-  const showCharges = currentFeatures ? currentFeatures.charges !== false : true;
-  const showOnboarding = currentFeatures ? currentFeatures.onboarding !== false : true;
-  const showPublications = currentFeatures ? currentFeatures.publications !== false : true;
-  const showTasks = currentFeatures ? currentFeatures.tasks !== false : true;
-  const showHistory = currentFeatures ? currentFeatures.history !== false : true;
-  const showTeam = currentFeatures ? currentFeatures.team !== false : true;
-  const showFinancial = currentFeatures ? currentFeatures.financial !== false : true;
+  const showLeads = dashboardFeatures ? dashboardFeatures.leads !== false : true;
+  const showClients = dashboardFeatures ? dashboardFeatures.clients !== false : true;
+  const showProposals = dashboardFeatures ? dashboardFeatures.proposals !== false : true;
+  const showContracts = dashboardFeatures ? dashboardFeatures.contracts !== false : true;
+  const showCharges = dashboardFeatures ? dashboardFeatures.charges !== false : true;
+  const showOnboarding = dashboardFeatures ? dashboardFeatures.onboarding !== false : true;
+  const showPublications = dashboardFeatures ? dashboardFeatures.publications !== false : true;
+  const showTasks = dashboardFeatures ? dashboardFeatures.tasks !== false : true;
+  const showHistory = dashboardFeatures ? dashboardFeatures.history !== false : true;
+  const showTeam = dashboardFeatures ? dashboardFeatures.team !== false : true;
+  const showFinancial = dashboardFeatures ? dashboardFeatures.financial !== false : true;
 
   // Financial calculations for dashboard summary
   const today = new Date();
@@ -112,7 +159,7 @@ export default function DashboardPage() {
     return !isNaN(due.getTime()) && due < today;
   };
 
-  const financeEntries = financialEntries || [];
+  const financeEntries = isDatabaseMode ? [] : financialEntries || [];
   const recs = financeEntries.filter((e: FinancialEntry) => e.type === 'receivable');
   const pays = financeEntries.filter((e: FinancialEntry) => e.type === 'payable');
 
@@ -195,30 +242,22 @@ export default function DashboardPage() {
     .filter(c => c.commercialStatus === 'active' || c.commercialStatus === 'onboarding')
     .slice(0, 4);
 
-  // Team productivity mock data
-  const teamProductivity = [
+  // Team productivity is sandbox-only until real task/member metrics are migrated.
+  const teamProductivity = isDatabaseMode ? [] : [
     { name: 'Ana Silva', role: 'Operações / Onboarding', completed: 32, total: 40, avatar: 'AS' },
     { name: 'João Santos', role: 'Designer / Social Media', completed: 20, total: 25, avatar: 'JS' },
     { name: 'Maria Souza', role: 'Gestora de Tráfego', completed: 28, total: 30, avatar: 'MS' },
     { name: 'Carlos Santos', role: 'Diretor Comercial', completed: 15, total: 18, avatar: 'CS' }
   ];
 
-  // Dynamic grid configuration for active KPI cards
-  const activeKpis = [
+  // Operational KPI cards stay balanced; financial summary has its own row.
+  const operationalKpis = [
     showProposals,
     (showContracts || showCharges),
     showOnboarding,
     showPublications,
-    showTasks,
-    showFinancial
+    showTasks
   ].filter(Boolean).length;
-
-  const gridColsClass =
-    activeKpis === 6 ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6' :
-    activeKpis === 5 ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5' :
-    activeKpis === 4 ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4' :
-    activeKpis === 3 ? 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3' :
-    activeKpis === 2 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1';
 
   // Overall enabled count (excluding publicProposal since it's external)
   const enabledCount = [
@@ -226,16 +265,21 @@ export default function DashboardPage() {
     showOnboarding, showPublications, showTasks, showHistory, showTeam, showFinancial
   ].filter(Boolean).length;
 
-  const hasLeftColumn = showTasks || showTeam;
-  const hasRightColumn = showClients || showHistory;
+  const hasDashboardSections = showTasks || showClients || showTeam || showHistory;
 
   return (
-    <div className="space-y-8">
+    <div className="mx-auto w-full max-w-6xl space-y-8 2xl:max-w-7xl">
       {/* Page Header */}
       <PageHeader
-        title={`Dashboard: ${currentOrganization?.name || 'Organização não encontrada'}`}
-        description={`Acompanhamento operacional em tempo real da organização. Plano: ${String(currentOrganization?.planId ?? 'sem plano').toUpperCase()}`}
+        title={`Dashboard: ${dashboardOrganization?.name || 'Organização não encontrada'}`}
+        description={`${isDatabaseMode ? 'Acompanhamento operacional com dados reais da organização.' : 'Acompanhamento operacional em tempo real da organização.'} Plano: ${String(dashboardOrganization?.planId ?? 'sem plano').toUpperCase()}`}
       />
+
+      {isDatabaseMode && tenantContextError && (
+        <div className="rounded-lg border border-warning/20 bg-warning/10 px-4 py-3 text-xs font-medium text-warning">
+          Não foi possível carregar a organização ativa. O dashboard permanecerá sem dados operacionais até a sessão ser validada.
+        </div>
+      )}
 
       {/* Warning banner if too few modules are enabled */}
       {enabledCount <= 3 && (
@@ -249,11 +293,11 @@ export default function DashboardPage() {
       )}
 
       {/* KPI Metrics Categories Grid */}
-      {activeKpis > 0 && (
+      {operationalKpis > 0 && (
         <div className="space-y-4">
           <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Filtro de Desempenho Operacional</h2>
 
-          <div className={`grid grid-cols-1 sm:grid-cols-2 ${gridColsClass} gap-4`}>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
 
             {/* Comercial */}
             {showProposals && (
@@ -282,7 +326,9 @@ export default function DashboardPage() {
                         <CheckCircle className="h-3.5 w-3.5 text-success shrink-0" />
                         <span className="whitespace-nowrap font-medium">Aceitas</span>
                       </div>
-                      <span className="text-[10px] text-success font-medium block mt-0.5">+15% mês</span>
+                      <span className={`text-[10px] font-medium block mt-0.5 ${isDatabaseMode ? 'text-muted-foreground' : 'text-success'}`}>
+                        {isDatabaseMode ? 'Sem dados reais' : '+15% mês'}
+                      </span>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                       <Sparkline points={getSparklinePoints(propostasAceitasItems, p => p.createdAt)} variant="success" className="w-16 sm:w-20 md:w-24" />
@@ -338,7 +384,9 @@ export default function DashboardPage() {
                             <CreditCard className="h-3.5 w-3.5 text-success shrink-0" />
                             <span className="whitespace-nowrap font-medium">Pago</span>
                           </div>
-                          <span className="text-[10px] text-success font-medium block mt-0.5">+8% sem.</span>
+                          <span className={`text-[10px] font-medium block mt-0.5 ${isDatabaseMode ? 'text-muted-foreground' : 'text-success'}`}>
+                            {isDatabaseMode ? 'Sem dados reais' : '+8% sem.'}
+                          </span>
                         </div>
                         <div className="flex items-center gap-3 shrink-0">
                           <Sparkline points={getSparklinePoints(cobrancasPagasItems, c => c.paidAt || c.createdAt)} variant="success" className="w-16 sm:w-20 md:w-24" />
@@ -440,7 +488,9 @@ export default function DashboardPage() {
                         <AlertTriangle className="h-3.5 w-3.5 text-danger shrink-0" />
                         <span className="whitespace-nowrap font-medium">Atrasadas</span>
                       </div>
-                      <span className="text-[10px] text-danger font-medium block mt-0.5">Crítico</span>
+                      <span className={`text-[10px] font-medium block mt-0.5 ${isDatabaseMode ? 'text-muted-foreground' : 'text-danger'}`}>
+                        {isDatabaseMode ? 'Sem atrasos reais' : 'Crítico'}
+                      </span>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                       <Sparkline points={getSparklinePoints(tarefasAtrasadasItems, t => t.createdAt)} variant="danger" className="w-16 sm:w-20 md:w-24" />
@@ -450,264 +500,266 @@ export default function DashboardPage() {
                 </div>
               </Card>
             )}
-
-            {/* Resumo Financeiro do Novo Módulo */}
-            {showFinancial && (
-              <Card className="p-4 border-border/50 bg-card/40 backdrop-blur-sm">
-                <div className="flex items-center justify-between border-b border-border/30 pb-2 mb-3">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Resumo Financeiro (Mês)</span>
-                  <Link href="/financeiro" className="text-[10px] font-bold text-primary hover:underline flex items-center gap-0.5">
-                    Detalhes <ArrowRight className="h-3 w-3" />
-                  </Link>
-                </div>
-                <div className="space-y-3.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
-                        <span className="h-1.5 w-1.5 rounded-full bg-success" />
-                        <span className="font-medium">A Receber</span>
-                      </div>
-                      <span className="text-[10px] text-muted-foreground block mt-0.5">Em aberto</span>
-                    </div>
-                    <span className="text-sm font-bold text-foreground">R$ {dashAReceber.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2 border-t border-border/10 pt-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
-                        <span className="h-1.5 w-1.5 rounded-full bg-primary" />
-                        <span className="font-medium">A Pagar</span>
-                      </div>
-                      <span className="text-[10px] text-muted-foreground block mt-0.5">Em aberto</span>
-                    </div>
-                    <span className="text-sm font-bold text-foreground">R$ {dashAPagar.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2 border-t border-border/10 pt-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
-                        <span className="h-1.5 w-1.5 rounded-full bg-danger" />
-                        <span className="font-medium">Vencidos</span>
-                      </div>
-                      <span className="text-[10px] text-muted-foreground block mt-0.5">Total atrasado</span>
-                    </div>
-                    <span className={`text-sm font-bold ${dashVencidos > 0 ? 'text-danger' : 'text-foreground'}`}>
-                      R$ {dashVencidos.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2 border-t border-border/10 pt-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
-                        <span className="h-1.5 w-1.5 rounded-full bg-info" />
-                        <span className="font-medium">Resultado</span>
-                      </div>
-                      <span className="text-[10px] text-muted-foreground block mt-0.5">Previsto do mês</span>
-                    </div>
-                    <span className={`text-sm font-bold ${dashResultadoPrevisto >= 0 ? 'text-success' : 'text-danger'}`}>
-                      R$ {dashResultadoPrevisto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                </div>
-              </Card>
-            )}
-
           </div>
         </div>
       )}
 
+      {showFinancial && (
+        <div className="space-y-4">
+          <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Resumo Financeiro (Mês)</h2>
+          <Card className="p-5 border-border/50 bg-card/40 backdrop-blur-sm">
+            <div className="flex flex-col gap-3 border-b border-border/30 pb-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-bold text-foreground">Financeiro real</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {isDatabaseMode && financeEntries.length === 0
+                    ? 'Nenhum lançamento financeiro real cadastrado.'
+                    : 'Consolidado dos lançamentos do mês corrente.'}
+                </p>
+              </div>
+              <Link href="/financeiro" className="inline-flex items-center gap-1 text-xs font-bold text-primary hover:underline">
+                Detalhes <ArrowRight className="h-3 w-3" />
+              </Link>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-lg border border-border/30 bg-muted/10 p-4">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                  <span className="h-1.5 w-1.5 rounded-full bg-success" />
+                  <span>A Receber</span>
+                </div>
+                <p className="mt-2 text-xl font-bold text-foreground">R$ {formatCurrency(dashAReceber)}</p>
+                <p className="mt-1 text-[10px] text-muted-foreground">Em aberto</p>
+              </div>
+
+              <div className="rounded-lg border border-border/30 bg-muted/10 p-4">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                  <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                  <span>A Pagar</span>
+                </div>
+                <p className="mt-2 text-xl font-bold text-foreground">R$ {formatCurrency(dashAPagar)}</p>
+                <p className="mt-1 text-[10px] text-muted-foreground">Em aberto</p>
+              </div>
+
+              <div className="rounded-lg border border-border/30 bg-muted/10 p-4">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                  <span className="h-1.5 w-1.5 rounded-full bg-danger" />
+                  <span>Vencidos</span>
+                </div>
+                <p className={`mt-2 text-xl font-bold ${dashVencidos > 0 ? 'text-danger' : 'text-foreground'}`}>
+                  R$ {formatCurrency(dashVencidos)}
+                </p>
+                <p className="mt-1 text-[10px] text-muted-foreground">Total atrasado</p>
+              </div>
+
+              <div className="rounded-lg border border-border/30 bg-muted/10 p-4">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                  <span className="h-1.5 w-1.5 rounded-full bg-info" />
+                  <span>Resultado</span>
+                </div>
+                <p className={`mt-2 text-xl font-bold ${dashResultadoPrevisto >= 0 ? 'text-success' : 'text-danger'}`}>
+                  R$ {formatCurrency(dashResultadoPrevisto)}
+                </p>
+                <p className="mt-1 text-[10px] text-muted-foreground">Previsto do mês</p>
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
       {/* Main Content Dashboard Sections */}
-      {(hasLeftColumn || hasRightColumn) && (
-        <div className={`grid grid-cols-1 ${hasLeftColumn && hasRightColumn ? 'xl:grid-cols-3' : 'xl:grid-cols-1'} gap-8`}>
-
-          {/* Left Column (Activities & Upcoming Tasks) */}
-          {hasLeftColumn && (
-            <div className={`${hasLeftColumn && hasRightColumn ? 'xl:col-span-2' : ''} space-y-8`}>
-
-              {/* Upcoming Tasks */}
-              {showTasks && (
-                <Card>
-                  <CardHeader className="flex flex-row items-center justify-between pb-3">
-                    <CardTitle className="text-base font-bold flex items-center gap-2">
-                      <CheckSquare className="h-4 w-4 text-primary" />
-                      Tarefas Próximas do Prazo
-                    </CardTitle>
-                    <Link href="/tarefas" className="text-xs font-semibold text-primary flex items-center gap-1 hover:underline">
-                      Ver tudo <ArrowRight className="h-3 w-3" />
-                    </Link>
-                  </CardHeader>
-                  <CardContent>
-                    {upcomingTasks.length === 0 ? (
-                      <div className="text-center py-6 text-sm text-muted-foreground">
-                        Nenhuma tarefa pendente no momento! 🎉
-                      </div>
-                    ) : (
-                      <div className="divide-y divide-border/30">
-                        {upcomingTasks.map((task) => (
-                          <div key={task.id} className="py-3.5 flex items-center justify-between gap-4 first:pt-0 last:pb-0">
-                            <div className="min-w-0">
-                              <span className="font-semibold text-sm text-foreground block truncate">{task.title}</span>
-                              <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                                <span className="text-[11px] font-medium text-muted-foreground">{task.clientName}</span>
-                                <span className="text-xs text-muted-foreground">•</span>
-                                <span className="text-[11px] font-medium text-muted-foreground flex items-center gap-1">
-                                  <Clock className="h-3 w-3" /> {new Date(task.dueDate).toLocaleDateString('pt-BR')}
-                                </span>
-                                <span className="text-xs text-muted-foreground">•</span>
-                                <span className="text-[11px] font-medium text-muted-foreground">Resp: {task.responsibleUser}</span>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2 shrink-0">
-                              <StatusBadge type="priority" status={task.priority} />
-                              <StatusBadge type="task" status={task.status} />
-                            </div>
+      {hasDashboardSections && (
+        <div className="grid grid-cols-1 gap-8 xl:grid-cols-2">
+          {showTasks && (
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-3">
+                <CardTitle className="text-base font-bold flex items-center gap-2">
+                  <CheckSquare className="h-4 w-4 text-primary" />
+                  Tarefas Próximas do Prazo
+                </CardTitle>
+                <Link href="/tarefas" className="text-xs font-semibold text-primary flex items-center gap-1 hover:underline">
+                  Ver tudo <ArrowRight className="h-3 w-3" />
+                </Link>
+              </CardHeader>
+              <CardContent>
+                {upcomingTasks.length === 0 ? (
+                  <EmptyState
+                    icon={CheckSquare}
+                    title={isDatabaseMode ? 'Nenhuma tarefa real cadastrada ainda.' : 'Nenhuma tarefa pendente no momento.'}
+                    description={isDatabaseMode ? 'Quando tarefas reais forem registradas, os prazos aparecerão aqui.' : 'As próximas entregas aparecerão aqui assim que forem criadas.'}
+                    href="/tarefas"
+                    actionLabel="Abrir tarefas"
+                  />
+                ) : (
+                  <div className="divide-y divide-border/30">
+                    {upcomingTasks.map((task) => (
+                      <div key={task.id} className="py-3.5 flex items-center justify-between gap-4 first:pt-0 last:pb-0">
+                        <div className="min-w-0">
+                          <span className="font-semibold text-sm text-foreground block truncate">{task.title}</span>
+                          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                            <span className="text-[11px] font-medium text-muted-foreground">{task.clientName}</span>
+                            <span className="text-xs text-muted-foreground">•</span>
+                            <span className="text-[11px] font-medium text-muted-foreground flex items-center gap-1">
+                              <Clock className="h-3 w-3" /> {new Date(task.dueDate).toLocaleDateString('pt-BR')}
+                            </span>
+                            <span className="text-xs text-muted-foreground">•</span>
+                            <span className="text-[11px] font-medium text-muted-foreground">Resp: {task.responsibleUser}</span>
                           </div>
-                        ))}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <StatusBadge type="priority" status={task.priority} />
+                          <StatusBadge type="task" status={task.status} />
+                        </div>
                       </div>
-                    )}
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Productivity & Team */}
-              {showTeam && (
-                <Card>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-base font-bold flex items-center gap-2">
-                      <UserCheck className="h-4 w-4 text-primary" />
-                      Produtividade da Equipe (Mês Corrente)
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {teamProductivity.map((person) => {
-                        const percent = Math.round((person.completed / person.total) * 100);
-                        return (
-                          <div key={person.name} className="space-y-2">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2.5">
-                                <div className="h-7 w-7 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary text-[10px]">
-                                  {person.avatar}
-                                </div>
-                                <div>
-                                  <span className="text-sm font-semibold block text-foreground leading-none">{person.name}</span>
-                                  <span className="text-[10px] text-muted-foreground mt-0.5 block">{person.role}</span>
-                                </div>
-                              </div>
-                              <span className="text-xs font-bold text-foreground">
-                                {person.completed}/{person.total} ({percent}%)
-                              </span>
-                            </div>
-                            <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-primary rounded-full transition-all duration-500"
-                                style={{ width: `${percent}%` }}
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-            </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           )}
 
-          {/* Right Column (Recent Activities & Highlight Clients) */}
-          {hasRightColumn && (
-            <div className="space-y-8">
-
-              {/* Highlight Clients */}
-              {showClients && (
-                <Card>
-                  <CardHeader className="flex flex-row items-center justify-between pb-3">
-                    <CardTitle className="text-base font-bold">
-                      Clientes em Destaque
-                    </CardTitle>
-                    <Link href="/clientes" className="text-xs font-semibold text-primary flex items-center gap-1 hover:underline">
-                      Todos <ArrowRight className="h-3 w-3" />
-                    </Link>
-                  </CardHeader>
-                  <CardContent>
-                    {highlightClients.length === 0 ? (
-                      <div className="text-center py-6 text-sm text-muted-foreground">
-                        Nenhum cliente cadastrado.
-                      </div>
-                    ) : (
-                      <div className="space-y-3.5">
-                        {highlightClients.map((client) => (
-                          <Link
-                            key={client.id}
-                            href={`/clientes/${client.id}`}
-                            className="block p-3 rounded-lg border border-border/60 bg-muted/20 hover:bg-muted/40 transition-colors"
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="font-semibold text-sm text-foreground block truncate">{client.companyName}</span>
-                              <StatusBadge type="client" status={client.commercialStatus} />
-                            </div>
-                            <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground">
-                              <span>Resp: {client.responsibleUser}</span>
-                              <span>{client.cnpj}</span>
-                            </div>
-                          </Link>
-                        ))}
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Recent Activities Audit Trail */}
-              {showHistory && (
-                <Card>
-                  <CardHeader className="flex flex-row items-center justify-between pb-3">
-                    <CardTitle className="text-base font-bold flex items-center gap-2">
-                      <Clock className="h-4 w-4 text-primary" />
-                      Histórico Recente
-                    </CardTitle>
-                    <Link href="/historico" className="text-xs font-semibold text-primary flex items-center gap-1 hover:underline">
-                      Ver auditoria <ArrowRight className="h-3 w-3" />
-                    </Link>
-                  </CardHeader>
-                  <CardContent>
-                    {recentActivities.length === 0 ? (
-                      <div className="text-center py-6 text-sm text-muted-foreground">
-                        Sem atividades registradas.
-                      </div>
-                    ) : (
-                      <div className="relative pl-4 border-l border-border/80 space-y-6">
-                        {recentActivities.map((event) => (
-                          <div key={event.id} className="relative group">
-                            {/* Timeline Bullet */}
-                            <span className="absolute -left-6.5 top-1 h-2.5 w-2.5 rounded-full bg-primary border border-card ring-2 ring-primary/20" />
-
-                            <div className="space-y-0.5">
-                              <span className="text-xs font-semibold text-foreground block">
-                                {event.title}
-                              </span>
-                              {event.clientName && (
-                                <span className="text-[10px] font-medium text-primary block">
-                                  {event.clientName}
-                                </span>
-                              )}
-                              <p className="text-xs text-muted-foreground leading-relaxed">
-                                {event.description}
-                              </p>
-                              <span className="text-[10px] text-muted-foreground/80 block mt-1">
-                                {new Date(event.createdAt).toLocaleTimeString('pt-BR')} em {new Date(event.createdAt).toLocaleDateString('pt-BR')}
-                              </span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              )}
-            </div>
+          {showClients && (
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-3">
+                <CardTitle className="text-base font-bold">
+                  Clientes em Destaque
+                </CardTitle>
+                <Link href="/clientes" className="text-xs font-semibold text-primary flex items-center gap-1 hover:underline">
+                  Todos <ArrowRight className="h-3 w-3" />
+                </Link>
+              </CardHeader>
+              <CardContent>
+                {highlightClients.length === 0 ? (
+                  <EmptyState
+                    icon={UserPlus}
+                    title={isDatabaseMode ? 'Nenhum cliente real cadastrado ainda.' : 'Nenhum cliente cadastrado.'}
+                    description={isDatabaseMode ? 'Cadastre clientes reais no módulo correspondente para acompanhar a carteira.' : 'Clientes ativos ou em onboarding aparecerão nesta lista.'}
+                    href="/clientes"
+                    actionLabel="Abrir clientes"
+                  />
+                ) : (
+                  <div className="space-y-3.5">
+                    {highlightClients.map((client) => (
+                      <Link
+                        key={client.id}
+                        href={`/clientes/${client.id}`}
+                        className="block p-3 rounded-lg border border-border/60 bg-muted/20 hover:bg-muted/40 transition-colors"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-semibold text-sm text-foreground block truncate">{client.companyName}</span>
+                          <StatusBadge type="client" status={client.commercialStatus} />
+                        </div>
+                        <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground">
+                          <span>Resp: {client.responsibleUser}</span>
+                          <span>{client.cnpj}</span>
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           )}
 
+          {showTeam && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base font-bold flex items-center gap-2">
+                  <UserCheck className="h-4 w-4 text-primary" />
+                  Produtividade da Equipe (Mês Corrente)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {teamProductivity.length === 0 ? (
+                  <EmptyState
+                    icon={UserCheck}
+                    title="Nenhum dado real de produtividade disponível."
+                    description="Quando tarefas reais forem concluídas, a produtividade da equipe aparecerá aqui."
+                  />
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {teamProductivity.map((person) => {
+                      const percent = Math.round((person.completed / person.total) * 100);
+                      return (
+                        <div key={person.name} className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2.5">
+                              <div className="h-7 w-7 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary text-[10px]">
+                                {person.avatar}
+                              </div>
+                              <div>
+                                <span className="text-sm font-semibold block text-foreground leading-none">{person.name}</span>
+                                <span className="text-[10px] text-muted-foreground mt-0.5 block">{person.role}</span>
+                              </div>
+                            </div>
+                            <span className="text-xs font-bold text-foreground">
+                              {person.completed}/{person.total} ({percent}%)
+                            </span>
+                          </div>
+                          <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-primary rounded-full transition-all duration-500"
+                              style={{ width: `${percent}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {showHistory && (
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-3">
+                <CardTitle className="text-base font-bold flex items-center gap-2">
+                  <Clock className="h-4 w-4 text-primary" />
+                  Histórico Recente
+                </CardTitle>
+                <Link href="/historico" className="text-xs font-semibold text-primary flex items-center gap-1 hover:underline">
+                  Ver auditoria <ArrowRight className="h-3 w-3" />
+                </Link>
+              </CardHeader>
+              <CardContent>
+                {recentActivities.length === 0 ? (
+                  <EmptyState
+                    icon={Clock}
+                    title={isDatabaseMode ? 'Nenhum histórico operacional real cadastrado.' : 'Sem atividades registradas.'}
+                    description={isDatabaseMode ? 'Eventos reais serão listados aqui quando os módulos operacionais forem usados.' : 'As movimentações da organização aparecerão neste histórico.'}
+                    href="/historico"
+                    actionLabel="Abrir histórico"
+                  />
+                ) : (
+                  <div className="relative pl-4 border-l border-border/80 space-y-6">
+                    {recentActivities.map((event) => (
+                      <div key={event.id} className="relative group">
+                        <span className="absolute -left-6.5 top-1 h-2.5 w-2.5 rounded-full bg-primary border border-card ring-2 ring-primary/20" />
+
+                        <div className="space-y-0.5">
+                          <span className="text-xs font-semibold text-foreground block">
+                            {event.title}
+                          </span>
+                          {event.clientName && (
+                            <span className="text-[10px] font-medium text-primary block">
+                              {event.clientName}
+                            </span>
+                          )}
+                          <p className="text-xs text-muted-foreground leading-relaxed">
+                            {event.description}
+                          </p>
+                          <span className="text-[10px] text-muted-foreground/80 block mt-1">
+                            {new Date(event.createdAt).toLocaleTimeString('pt-BR')} em {new Date(event.createdAt).toLocaleDateString('pt-BR')}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
         </div>
       )}
     </div>

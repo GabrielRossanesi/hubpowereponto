@@ -8,6 +8,8 @@ import Sidebar from '../../components/layout/sidebar';
 import Topbar from '../../components/layout/topbar';
 import { useTenantStore } from '../../lib/store';
 import { useMounted } from '../../hooks/useMounted';
+import { useDatabaseTenantContext } from '../../hooks/useDatabaseTenantContext';
+import { isDatabaseDataMode } from '../../lib/data-mode';
 import Button from '../../components/ui/button';
 import { useSession } from '../../lib/auth-client';
 
@@ -19,11 +21,13 @@ export default function DashboardLayout({
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const pathname = usePathname();
-  const { currentFeatures } = useTenantStore();
+  const { currentFeatures: sandboxFeatures } = useTenantStore();
+  const { context: databaseTenantContext } = useDatabaseTenantContext();
   const [backgroundOffset, setBackgroundOffset] = useState({ x: 0, y: 0 });
   const hasMounted = useMounted();
 
-  const isDatabaseMode = process.env.NEXT_PUBLIC_DATA_MODE === 'database';
+  const isDatabaseMode = isDatabaseDataMode;
+  const currentFeatures = isDatabaseMode ? databaseTenantContext?.features : sandboxFeatures;
   const { data: session, isPending } = useSession();
 
   useEffect(() => {
