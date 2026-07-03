@@ -184,6 +184,8 @@ export interface Publication {
   imageMimeType?: string;
   imageSize?: number;
   platform?: 'instagram' | 'facebook' | 'linkedin' | 'tiktok' | 'google_business' | 'other';
+  postType?: 'single_image' | 'carousel';
+  images?: string[];
 }
 
 export type TaskStatus = 'pending' | 'in_progress' | 'in_review' | 'completed' | 'overdue' | 'cancelled' | 'archived';

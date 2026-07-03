@@ -28,6 +28,10 @@ import Card from '../../components/ui/card';
 import StatusBadge from '../../components/ui/status-badge';
 import EmptyState from '../../components/ui/empty-state';
 import DatePicker from '../../components/ui/date-picker';
+import { isDatabaseDataMode } from '../../lib/data-mode';
+import { getClients, getTenantMembers } from '../clientes/actions';
+import type { Client } from '../../types';
+import { useCallback } from 'react';
 
 // Custom Brand Icons to avoid missing lucide-react exports
 function InstagramIcon({ className }: { className?: string }) {
@@ -98,6 +102,8 @@ function PlatformIcon({ platform }: { platform?: string }) {
 
 export default function PublicacoesPage() {
   const mounted = useMounted();
+  const isDatabaseMode = isDatabaseDataMode;
+
   const { 
     publications, 
     clients, 
@@ -107,12 +113,41 @@ export default function PublicacoesPage() {
     regeneratePublicationApprovalLink
   } = useTenantStore();
 
+  // Database States
+  const [dbClients, setDbClients] = useState<Client[]>([]);
+  const [dbMembers, setDbMembers] = useState<{ id: string; name: string }[]>([]);
+
+  const loadDbData = useCallback(async () => {
+    if (!isDatabaseMode) return;
+    try {
+      const [resClients, resMembers] = await Promise.all([
+        getClients(false),
+        getTenantMembers(),
+      ]);
+      setDbClients(resClients);
+      setDbMembers(resMembers);
+    } catch (err) {
+      console.error('Error loading db data in publicacoes:', err);
+    }
+  }, [isDatabaseMode]);
+
+  useEffect(() => {
+    if (isDatabaseMode) {
+      Promise.resolve().then(() => {
+        loadDbData();
+      });
+    }
+  }, [isDatabaseMode, loadDbData]);
+
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   // Form States
   const [selectedClientId, setSelectedClientId] = useState('');
+  const [postType, setPostType] = useState<'single_image' | 'carousel'>('single_image');
+  const [carouselImages, setCarouselImages] = useState<string[]>(['', '']);
+
   const [imageSource, setImageSource] = useState<'upload' | 'external_url'>('external_url');
   const [imageUrl, setImageUrl] = useState('https://images.unsplash.com/photo-1542751371-adc38448a05e?w=600&auto=format&fit=crop&q=80');
   const [imageFileBase64, setImageFileBase64] = useState('');
@@ -125,6 +160,15 @@ export default function PublicacoesPage() {
   const [scheduledDate, setScheduledDate] = useState('');
   const [responsavel, setResponsavel] = useState('João Santos');
   const [platform, setPlatform] = useState<'instagram' | 'facebook' | 'linkedin' | 'tiktok' | 'google_business' | 'other'>('instagram');
+
+  // Update responsavel default once dbMembers load
+  useEffect(() => {
+    if (isDatabaseMode && dbMembers.length > 0) {
+      Promise.resolve().then(() => {
+        setResponsavel(dbMembers[0].name);
+      });
+    }
+  }, [isDatabaseMode, dbMembers]);
 
   // Expanded caption state
   const [expandedCaptions, setExpandedCaptions] = useState<Record<string, boolean>>({});
@@ -185,16 +229,33 @@ export default function PublicacoesPage() {
 
   const handleCreatePublication = (e: React.FormEvent) => {
     e.preventDefault();
-    const client = clients.find(c => c.id === selectedClientId);
+    const client = isDatabaseMode
+      ? dbClients.find(c => c.id === selectedClientId)
+      : clients.find(c => c.id === selectedClientId);
+
     if (!client || !caption || !scheduledDate) {
       alert('Preencha os campos obrigatórios.');
       return;
     }
 
-    const finalImageUrl = imageSource === 'upload' ? imageFileBase64 : imageUrl;
-    if (!finalImageUrl) {
-      alert('Selecione uma imagem para upload ou insira uma URL de imagem.');
-      return;
+    let finalImageUrl = '';
+    let finalImages: string[] = [];
+
+    if (postType === 'single_image') {
+      finalImageUrl = imageSource === 'upload' ? imageFileBase64 : imageUrl;
+      if (!finalImageUrl) {
+        alert('Adicione pelo menos uma imagem para esta publicação.');
+        return;
+      }
+      finalImages = [finalImageUrl];
+    } else {
+      const validImages = carouselImages.filter(url => url.trim() !== '');
+      if (validImages.length < 2) {
+        alert('Adicione pelo menos duas imagens para criar um carrossel.');
+        return;
+      }
+      finalImageUrl = validImages[0];
+      finalImages = validImages;
     }
 
     addPublication({
@@ -202,6 +263,8 @@ export default function PublicacoesPage() {
       clientName: client.name,
       companyName: client.companyName,
       imageUrl: finalImageUrl,
+      images: finalImages,
+      postType: postType,
       caption: caption,
       scheduledDate: scheduledDate,
       status: 'pending_approval',
@@ -209,9 +272,9 @@ export default function PublicacoesPage() {
       responsibleUser: responsavel,
       platform: platform,
       imageSource: imageSource,
-      imageFileName: imageSource === 'upload' ? imageFileName : undefined,
-      imageSize: imageSource === 'upload' ? imageSize : undefined,
-      imageMimeType: imageSource === 'upload' ? imageMimeType : undefined,
+      imageFileName: postType === 'single_image' && imageSource === 'upload' ? imageFileName : undefined,
+      imageSize: postType === 'single_image' && imageSource === 'upload' ? imageSize : undefined,
+      imageMimeType: postType === 'single_image' && imageSource === 'upload' ? imageMimeType : undefined,
     });
 
     setSelectedClientId('');
@@ -221,9 +284,11 @@ export default function PublicacoesPage() {
     setImageFileName('');
     setImageSize(0);
     setImageMimeType('');
+    setCarouselImages(['', '']);
+    setPostType('single_image');
     setCaption('');
     setScheduledDate('');
-    setResponsavel('João Santos');
+    setResponsavel(isDatabaseMode ? (dbMembers[0]?.name || '') : 'João Santos');
     setPlatform('instagram');
     setFileError(null);
     setIsModalOpen(false);
@@ -237,8 +302,17 @@ export default function PublicacoesPage() {
     }
   };
 
-  const clientOptions = clients.map(c => ({ value: c.id, label: c.companyName }));
-  const teamOptions = teamMembers.map(m => ({ value: m.name, label: m.name }));
+  const clientOptions = isDatabaseMode
+    ? (dbClients.length > 0
+        ? dbClients.map(c => ({ value: c.id, label: c.companyName }))
+        : [{ value: '', label: 'Nenhum cliente cadastrado nesta organização. Cadastre um cliente antes de criar uma publicação.' }])
+    : clients.map(c => ({ value: c.id, label: c.companyName }));
+
+  const teamOptions = isDatabaseMode
+    ? (dbMembers.length > 0 
+        ? dbMembers.map(m => ({ value: m.name, label: m.name }))
+        : [{ value: '', label: 'Nenhum usuário encontrado nesta empresa' }])
+    : teamMembers.map(m => ({ value: m.name, label: m.name }));
   
   const platformOptions = [
     { value: 'instagram', label: 'Instagram' },
@@ -249,7 +323,7 @@ export default function PublicacoesPage() {
     { value: 'other', label: 'Outro' }
   ];
 
-  const finalPreviewImageUrl = imageSource === 'upload' ? imageFileBase64 : imageUrl;
+  const finalPreviewImageUrl = postType === 'carousel' ? (carouselImages[0] || '') : (imageSource === 'upload' ? imageFileBase64 : imageUrl);
 
   return (
     <div className="space-y-6">
@@ -316,6 +390,13 @@ export default function PublicacoesPage() {
           {filteredPubs.map((pub) => {
             const isExpired = pub.approvalLinkExpiresAt && new Date(pub.approvalLinkExpiresAt) < new Date();
             
+            const images = pub.images?.length
+              ? pub.images
+              : pub.imageUrl
+                ? [pub.imageUrl]
+                : [];
+            const isCarousel = pub.postType === 'carousel' || images.length > 1;
+
             return (
               <Card key={pub.id} className="overflow-hidden border border-border flex flex-col justify-between hover:shadow-md transition-shadow h-full bg-card">
                 <div className="flex flex-col flex-1">
@@ -323,10 +404,15 @@ export default function PublicacoesPage() {
                   <div className="relative h-48 bg-muted overflow-hidden shrink-0 border-b border-border/60">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img 
-                      src={pub.imageUrl} 
+                      src={images[0] || pub.imageUrl} 
                       alt="Social media post visual creative" 
                       className="w-full h-full object-cover"
                     />
+                    {isCarousel && (
+                      <div className="absolute bottom-2.5 left-2.5 bg-black/60 px-2 py-0.5 rounded text-[10px] text-white font-semibold">
+                        Carrossel ({images.length} imagens)
+                      </div>
+                    )}
                     <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5">
                       <div className="h-6 w-6 rounded-full bg-slate-900/80 backdrop-blur-sm flex items-center justify-center shadow-sm">
                         <PlatformIcon platform={pub.platform} />
@@ -508,56 +594,129 @@ export default function PublicacoesPage() {
             />
           </div>
 
-          {/* Image source selector */}
-          <div className="space-y-2">
-            <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block">Origem da Imagem</label>
-            <div className="flex gap-4">
-              <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
-                <input 
-                  type="radio" 
-                  name="imageSource" 
-                  checked={imageSource === 'external_url'} 
-                  onChange={() => setImageSource('external_url')}
-                  className="accent-primary" 
-                />
-                URL Externa
-              </label>
-              <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
-                <input 
-                  type="radio" 
-                  name="imageSource" 
-                  checked={imageSource === 'upload'} 
-                  onChange={() => setImageSource('upload')}
-                  className="accent-primary"
-                />
-                Upload Local (Demo Sandbox)
-              </label>
+          {/* Post Type Selector */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Select
+              label="Tipo de post"
+              options={[
+                { value: 'single_image', label: 'Imagem única' },
+                { value: 'carousel', label: 'Carrossel' }
+              ]}
+              value={postType}
+              onChange={(e) => setPostType(e.target.value as 'single_image' | 'carousel')}
+            />
+            <div className="flex items-end pb-1 text-xs text-muted-foreground font-medium">
+              {postType === 'single_image'
+                ? 'Permite exatamente 1 imagem (upload ou URL).'
+                : 'Permite carrossel de 2 a 10 imagens (URLs externas).'}
             </div>
           </div>
 
-          {imageSource === 'external_url' ? (
-            <Input
-              label="URL da Imagem de Destaque"
-              type="url"
-              placeholder="Link de imagem (ex: https://images.unsplash.com/...)"
-              value={imageUrl}
-              onChange={(e) => setImageUrl(e.target.value)}
-              required
-            />
+          {postType === 'single_image' ? (
+            <>
+              {/* Image source selector */}
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block">Origem da Imagem</label>
+                <div className="flex gap-4">
+                  <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
+                    <input 
+                      type="radio" 
+                      name="imageSource" 
+                      checked={imageSource === 'external_url'} 
+                      onChange={() => setImageSource('external_url')}
+                      className="accent-primary" 
+                    />
+                    URL Externa
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
+                    <input 
+                      type="radio" 
+                      name="imageSource" 
+                      checked={imageSource === 'upload'} 
+                      onChange={() => setImageSource('upload')}
+                      className="accent-primary"
+                    />
+                    Upload Local (Demo Sandbox)
+                  </label>
+                </div>
+              </div>
+
+              {imageSource === 'external_url' ? (
+                <Input
+                  label="URL da Imagem de Destaque"
+                  type="url"
+                  placeholder="Link de imagem (ex: https://images.unsplash.com/...)"
+                  value={imageUrl}
+                  onChange={(e) => setImageUrl(e.target.value)}
+                  required
+                />
+              ) : (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block">Selecionar Imagem</label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleFileChange}
+                    className="w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-primary/10 file:text-primary file:hover:bg-primary/20 file:cursor-pointer"
+                    required={!imageFileBase64}
+                  />
+                  {fileError && (
+                    <div className="p-3 bg-red-950/20 border border-red-900/30 rounded-lg flex items-start gap-2 text-red-400 text-xs mt-1.5">
+                      <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                      <span>{fileError}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
           ) : (
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block">Selecionar Imagem</label>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleFileChange}
-                className="w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-primary/10 file:text-primary file:hover:bg-primary/20 file:cursor-pointer"
-                required={!imageFileBase64}
-              />
-              {fileError && (
-                <div className="p-3 bg-red-950/20 border border-red-900/30 rounded-lg flex items-start gap-2 text-red-400 text-xs mt-1.5">
-                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                  <span>{fileError}</span>
+            <div className="space-y-3 bg-muted/20 p-4 rounded-xl border border-border/80">
+              <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block">Imagens do Carrossel (URLs)</label>
+              
+              <div className="space-y-3">
+                {carouselImages.map((imgUrl, index) => (
+                  <div key={index} className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-muted-foreground w-16 shrink-0">Imagem {index + 1}:</span>
+                    <input
+                      type="url"
+                      value={imgUrl}
+                      onChange={(e) => {
+                        const newList = [...carouselImages];
+                        newList[index] = e.target.value;
+                        setCarouselImages(newList);
+                      }}
+                      placeholder={`https://images.unsplash.com/post-art-${index + 1}`}
+                      className="h-10 flex-1 pl-3 pr-3 rounded-lg border border-border bg-background text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:border-primary transition-all placeholder:text-muted-foreground/75"
+                      required
+                    />
+                    {carouselImages.length > 2 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const newList = carouselImages.filter((_, i) => i !== index);
+                          setCarouselImages(newList);
+                        }}
+                        className="px-2 py-1 text-xs font-bold text-danger hover:bg-danger/10 rounded-lg transition-colors cursor-pointer"
+                        title="Remover imagem"
+                      >
+                        Remover
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {carouselImages.length < 10 && (
+                <div className="pt-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCarouselImages([...carouselImages, ''])}
+                    className="text-xs font-semibold h-8"
+                  >
+                    + Adicionar Imagem ao Carrossel
+                  </Button>
                 </div>
               )}
             </div>
@@ -596,7 +755,11 @@ export default function PublicacoesPage() {
               <div className="border border-border/60 rounded-xl bg-card overflow-hidden max-w-sm mx-auto shadow-sm">
                 <div className="p-3 border-b border-border/40 flex items-center justify-between">
                   <span className="font-bold text-xs text-foreground block">
-                    {selectedClientId ? clients.find(c => c.id === selectedClientId)?.companyName : 'Nome do Cliente'}
+                    {selectedClientId
+                      ? (isDatabaseMode
+                          ? dbClients.find(c => c.id === selectedClientId)?.companyName
+                          : clients.find(c => c.id === selectedClientId)?.companyName)
+                      : 'Nome do Cliente'}
                   </span>
                   <span className="text-[10px] text-muted-foreground uppercase font-bold flex items-center gap-1">
                     <PlatformIcon platform={platform} />
@@ -604,15 +767,31 @@ export default function PublicacoesPage() {
                   </span>
                 </div>
                 {finalPreviewImageUrl && (
-                  <div className="aspect-square bg-muted flex items-center justify-center overflow-hidden border-b border-border/30">
+                  <div className="relative aspect-square bg-muted flex items-center justify-center overflow-hidden border-b border-border/30">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={finalPreviewImageUrl} alt="Preview creative" className="object-cover w-full h-full" />
+                    {postType === 'carousel' && (
+                      <div className="absolute bottom-2.5 right-2.5 bg-black/60 px-2 py-0.5 rounded text-[10px] text-white font-semibold">
+                        1 / {carouselImages.filter(url => url.trim() !== '').length || 2}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {postType === 'carousel' && (
+                  <div className="flex justify-center gap-1.5 py-2 bg-card border-b border-border/10">
+                    {Array.from({ length: Math.min(10, carouselImages.filter(url => url.trim() !== '').length || 2) }).map((_, i) => (
+                      <span key={i} className={`h-1.5 w-1.5 rounded-full ${i === 0 ? 'bg-primary' : 'bg-muted-foreground/35'}`} />
+                    ))}
                   </div>
                 )}
                 <div className="p-3">
                   <p className="text-xs text-muted-foreground line-clamp-3 leading-relaxed whitespace-pre-wrap">
                     <span className="font-bold text-foreground mr-1.5">
-                      {selectedClientId ? clients.find(c => c.id === selectedClientId)?.companyName.toLowerCase().replace(/\s+/g, '') : 'cliente'}
+                      {selectedClientId
+                        ? (isDatabaseMode
+                            ? dbClients.find(c => c.id === selectedClientId)?.companyName.toLowerCase().replace(/\s+/g, '')
+                            : clients.find(c => c.id === selectedClientId)?.companyName.toLowerCase().replace(/\s+/g, ''))
+                        : 'cliente'}
                     </span>
                     {caption || 'Seu texto de legenda...'}
                   </p>
