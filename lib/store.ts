@@ -3398,7 +3398,7 @@ export function useTenantStore() {
     contracts: sandboxOperationalData ? store.contracts.filter(c => c.organizationId === currentOrgId) : [],
     charges: sandboxOperationalData ? store.charges.filter(c => c.organizationId === currentOrgId) : [],
     onboardings: sandboxOperationalData ? store.onboardings.filter(o => o.organizationId === currentOrgId) : [],
-    publications: sandboxOperationalData ? store.publications.filter(p => p.organizationId === currentOrgId) : [],
+    publications: store.publications.filter(p => p.organizationId === currentOrgId),
     tasks: sandboxOperationalData ? store.tasks.filter(t => t.organizationId === currentOrgId) : [],
     historyEvents: sandboxOperationalData ? store.historyEvents.filter(h => h.organizationId === currentOrgId) : [],
     teamMembers: sandboxOperationalData ? store.teamMembers.filter(m => m.organizationId === currentOrgId) : [],

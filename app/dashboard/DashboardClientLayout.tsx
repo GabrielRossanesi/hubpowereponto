@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { Lock } from 'lucide-react';
 import Sidebar from '../../components/layout/sidebar';
 import Topbar from '../../components/layout/topbar';
-import { useTenantStore } from '../../lib/store';
+import { useTenantStore, useStore } from '../../lib/store';
 import { useMounted } from '../../hooks/useMounted';
 import { useDatabaseTenantContext } from '../../hooks/useDatabaseTenantContext';
 import { isDatabaseDataMode } from '../../lib/data-mode';
@@ -21,12 +21,25 @@ export default function DashboardClientLayout({
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const pathname = usePathname();
-  const { currentFeatures: sandboxFeatures } = useTenantStore();
+  const store = useTenantStore();
+  const sandboxFeatures = store.currentFeatures;
+  const currentOrgId = useStore(state => state.currentOrganizationId);
+  const setCurrentOrgId = useStore(state => state.setCurrentOrganizationId);
   const { context: databaseTenantContext } = useDatabaseTenantContext();
   const [backgroundOffset, setBackgroundOffset] = useState({ x: 0, y: 0 });
   const hasMounted = useMounted();
 
   const isDatabaseMode = isDatabaseDataMode;
+
+  // Sync currentOrganizationId to Zustand store in database mode
+  useEffect(() => {
+    if (isDatabaseMode && databaseTenantContext?.organization.id) {
+      if (currentOrgId !== databaseTenantContext.organization.id) {
+        setCurrentOrgId(databaseTenantContext.organization.id);
+      }
+    }
+  }, [isDatabaseMode, databaseTenantContext?.organization.id, currentOrgId, setCurrentOrgId]);
+
   const currentFeatures = isDatabaseMode ? databaseTenantContext?.features : sandboxFeatures;
   const { data: session, isPending } = useSession();
 

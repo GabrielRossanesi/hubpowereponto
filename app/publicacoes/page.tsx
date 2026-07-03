@@ -277,6 +277,8 @@ export default function PublicacoesPage() {
       imageMimeType: postType === 'single_image' && imageSource === 'upload' ? imageMimeType : undefined,
     });
 
+    alert('Publicação criada com sucesso!');
+
     setSelectedClientId('');
     setImageSource('external_url');
     setImageUrl('https://images.unsplash.com/photo-1542751371-adc38448a05e?w=600&auto=format&fit=crop&q=80');
