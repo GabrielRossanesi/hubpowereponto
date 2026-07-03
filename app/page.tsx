@@ -190,7 +190,7 @@ export default function LandingPage() {
             <ThemeToggle />
             <Link href="/login">
               <Button variant="outline" size="sm" className="font-semibold text-xs border-border hover:bg-muted text-muted-foreground hover:text-foreground">
-                Entrar
+                Entrar no sistema
               </Button>
             </Link>
             <Button variant="primary" size="sm" className="font-bold text-xs" onClick={() => handleOpenDemoModal(null)}>

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import Button from '../../components/ui/button';
@@ -8,18 +8,26 @@ import Input from '../../components/ui/input';
 import Card from '../../components/ui/card';
 import { PLATFORM_DESCRIPTION } from '../../lib/config';
 import { LogoIcon } from '../../components/ui/logo';
-import { signIn } from '../../lib/auth-client';
+import { signIn, useSession } from '../../lib/auth-client';
+import { isDatabaseDataMode } from '../../lib/data-mode';
 
 export default function LoginPage() {
   const router = useRouter();
 
-  const isDatabaseMode = process.env.NEXT_PUBLIC_DATA_MODE === 'database';
+  const isDatabaseMode = isDatabaseDataMode;
+  const { data: session, isPending } = useSession();
 
   const [email, setEmail] = useState(isDatabaseMode ? '' : 'ana.silva@powerponto.com.br');
   const [password, setPassword] = useState(isDatabaseMode ? '' : 'power123');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (isDatabaseMode && !isPending && session) {
+      router.replace('/dashboard');
+    }
+  }, [isDatabaseMode, isPending, router, session]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,10 +44,10 @@ export default function LoginPage() {
         },
         onSuccess: () => {
           setIsLoading(false);
-          router.push('/dashboard');
+          router.replace('/dashboard');
         },
-        onError: (ctx) => {
-          setError(ctx.error.message || 'Credenciais inválidas ou erro de rede.');
+        onError: () => {
+          setError('Não foi possível entrar. Verifique suas credenciais e tente novamente.');
           setIsLoading(false);
         }
       });
@@ -57,6 +65,14 @@ export default function LoginPage() {
     }
   };
 
+  if (isDatabaseMode && (isPending || session)) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4 bg-gradient-to-b from-background via-card/10 to-background">
+        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-primary" />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col justify-center items-center px-4 bg-gradient-to-b from-background via-card/10 to-background relative overflow-hidden">
       
@@ -69,11 +85,19 @@ export default function LoginPage() {
         <div className="flex flex-col items-center justify-center text-center">
           <LogoIcon size="xl" className="mb-4 hover:scale-105 transition-transform duration-300" />
           <h1 className="text-2xl font-bold tracking-tight text-foreground leading-none select-none">
-            <span>NV</span>
-            <span className="text-primary font-semibold tracking-wide ml-0.5">Hub</span>
+            {isDatabaseMode ? (
+              'Entrar na NV Hub'
+            ) : (
+              <>
+                <span>NV</span>
+                <span className="text-primary font-semibold tracking-wide ml-0.5">Hub</span>
+              </>
+            )}
           </h1>
           <p className="text-xs text-muted-foreground mt-2 max-w-xs font-semibold">
-            {PLATFORM_DESCRIPTION}
+            {isDatabaseMode
+              ? 'Acesse sua área operacional e acompanhe os módulos habilitados para sua empresa.'
+              : PLATFORM_DESCRIPTION}
           </p>
         </div>
 
@@ -82,11 +106,11 @@ export default function LoginPage() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1">
               <h2 className="text-base font-semibold text-foreground">
-                {isDatabaseMode ? 'Acesso Restrito' : 'Ambiente Demonstrativo'}
+                {isDatabaseMode ? 'Acesso restrito' : 'Ambiente Demonstrativo'}
               </h2>
               <p className="text-xs text-muted-foreground">
                 {isDatabaseMode 
-                  ? 'Acesso restrito a empresas cadastradas pela NV Hub.' 
+                  ? 'Entre com as credenciais fornecidas pela equipe NV Hub.'
                   : 'Use as credenciais abaixo para acessar a demo da NV Hub.'}
               </p>
             </div>
@@ -125,8 +149,14 @@ export default function LoginPage() {
             </div>
 
             <Button type="submit" className="w-full mt-2" isLoading={isLoading}>
-              Entrar no Painel
+              {isDatabaseMode ? 'Entrar no sistema' : 'Entrar no Painel'}
             </Button>
+
+            {isDatabaseMode && (
+              <p className="text-center text-[11px] leading-relaxed text-muted-foreground">
+                Não possui acesso? Fale com a equipe NV Hub para liberar sua empresa.
+              </p>
+            )}
           </form>
         </Card>
 
