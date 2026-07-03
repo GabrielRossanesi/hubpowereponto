@@ -302,6 +302,17 @@ export default function PublicacoesPage() {
     }
   };
 
+  const handleOpenExternalStock = () => {
+    const clientObj = isDatabaseMode
+      ? dbClients.find(c => c.id === selectedClientId)
+      : clients.find(c => c.id === selectedClientId);
+    const query = clientObj?.companyName || caption?.slice(0, 30) || 'social media';
+    const url = `https://unsplash.com/s/photos/${encodeURIComponent(query)}`;
+    if (typeof window !== 'undefined') {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    }
+  };
+
   const clientOptions = isDatabaseMode
     ? (dbClients.length > 0
         ? dbClients.map(c => ({ value: c.id, label: c.companyName }))
@@ -642,14 +653,28 @@ export default function PublicacoesPage() {
               </div>
 
               {imageSource === 'external_url' ? (
-                <Input
-                  label="URL da Imagem de Destaque"
-                  type="url"
-                  placeholder="Link de imagem (ex: https://images.unsplash.com/...)"
-                  value={imageUrl}
-                  onChange={(e) => setImageUrl(e.target.value)}
-                  required
-                />
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block">URL da Imagem de Destaque</label>
+                    <button
+                      type="button"
+                      onClick={handleOpenExternalStock}
+                      className="text-xs font-semibold text-primary hover:text-primary/80 flex items-center gap-1 hover:underline cursor-pointer"
+                    >
+                      <ImageIcon className="h-3.5 w-3.5" /> Buscar imagem externa (Unsplash)
+                    </button>
+                  </div>
+                  <Input
+                    type="url"
+                    placeholder="Link de imagem (ex: https://images.unsplash.com/...)"
+                    value={imageUrl}
+                    onChange={(e) => setImageUrl(e.target.value)}
+                    required
+                  />
+                  <p className="text-[10px] text-muted-foreground/80">
+                    Dica: abra o banco de imagens, copie a URL da imagem desejada (clique com botão direito &gt; copiar endereço da imagem) e cole no campo acima.
+                  </p>
+                </div>
               ) : (
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block">Selecionar Imagem</label>
@@ -671,7 +696,16 @@ export default function PublicacoesPage() {
             </>
           ) : (
             <div className="space-y-3 bg-muted/20 p-4 rounded-xl border border-border/80">
-              <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block">Imagens do Carrossel (URLs)</label>
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block">Imagens do Carrossel (URLs)</label>
+                <button
+                  type="button"
+                  onClick={handleOpenExternalStock}
+                  className="text-xs font-semibold text-primary hover:text-primary/80 flex items-center gap-1 hover:underline cursor-pointer"
+                >
+                  <ImageIcon className="h-3.5 w-3.5" /> Buscar imagem externa (Unsplash)
+                </button>
+              </div>
               
               <div className="space-y-3">
                 {carouselImages.map((imgUrl, index) => (
@@ -706,8 +740,8 @@ export default function PublicacoesPage() {
                 ))}
               </div>
 
-              {carouselImages.length < 10 && (
-                <div className="pt-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
+                {carouselImages.length < 10 && (
                   <Button
                     type="button"
                     variant="outline"
@@ -717,8 +751,11 @@ export default function PublicacoesPage() {
                   >
                     + Adicionar Imagem ao Carrossel
                   </Button>
-                </div>
-              )}
+                )}
+                <p className="text-[10px] text-muted-foreground/80">
+                  Dica: abra o banco de imagens, copie a URL da imagem desejada e cole nos campos.
+                </p>
+              </div>
             </div>
           )}
 
