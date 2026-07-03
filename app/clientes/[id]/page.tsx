@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { useTenantStore } from '../../../lib/store';
 import { useMounted } from '../../../hooks/useMounted';
-import type { TaskPriority } from '../../../types';
+import type { TaskPriority, Client, TeamTask, HistoryEvent, TaskStatus } from '../../../types';
 import Button from '../../../components/ui/button';
 import Input from '../../../components/ui/input';
 import Textarea from '../../../components/ui/textarea';
@@ -24,12 +24,25 @@ import Table, { TableHeader, TableBody, TableRow, TableHead, TableCell } from '.
 import EmptyState from '../../../components/ui/empty-state';
 import DatePicker from '../../../components/ui/date-picker';
 import { SetupProgressModal, SetupIndicator } from '../../../components/ui/setup-progress-modal';
+import { isDatabaseDataMode } from '../../../lib/data-mode';
+import { getClientProfileDbData, getTenantMembers } from '../actions';
+import { createTask, updateTask } from '../../tarefas/actions';
+import { useCallback } from 'react';
 
 export default function ClientProfilePage() {
   const params = useParams();
   const router = useRouter();
   const mounted = useMounted();
   const clientId = params.id as string;
+  const isDatabaseMode = isDatabaseDataMode;
+
+  // Database States
+  const [dbClient, setDbClient] = useState<Client | null>(null);
+  const [dbTasks, setDbTasks] = useState<TeamTask[]>([]);
+  const [dbHistory, setDbHistory] = useState<HistoryEvent[]>([]);
+  const [dbMembers, setDbMembers] = useState<{ id: string; name: string }[]>([]);
+  const [isLoadingDb, setIsLoadingDb] = useState(isDatabaseMode);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const { 
     clients, proposals, contracts, charges, onboardings, 
@@ -38,8 +51,38 @@ export default function ClientProfilePage() {
     updatePublicationStatus, addTask, updateTaskStatus, teamMembers, checkLimit
   } = useTenantStore();
 
+  const loadDbData = useCallback(async () => {
+    if (!isDatabaseMode) return;
+    try {
+      const [res, members] = await Promise.all([
+        getClientProfileDbData(clientId),
+        getTenantMembers(),
+      ]);
+      if (res.success) {
+        setDbClient(res.client || null);
+        setDbTasks(res.tasks || []);
+        setDbHistory(res.history || []);
+        setDbMembers(members || []);
+      } else {
+        setErrorMsg(res.error || 'Erro ao carregar dados do cliente.');
+      }
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Erro ao carregar dados do cliente.');
+    } finally {
+      setIsLoadingDb(false);
+    }
+  }, [clientId, isDatabaseMode]);
+
+  React.useEffect(() => {
+    if (isDatabaseMode) {
+      Promise.resolve().then(() => {
+        loadDbData();
+      });
+    }
+  }, [isDatabaseMode, loadDbData]);
+
   // Selected client
-  const client = clients.find(c => c.id === clientId);
+  const client = isDatabaseMode ? dbClient : clients.find(c => c.id === clientId);
 
   // Onboarding links form state
   const onboarding = onboardings.find(o => o.clientId === clientId);
@@ -91,10 +134,18 @@ export default function ClientProfilePage() {
   // Add Task states
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [taskTitle, setTaskTitle] = useState('');
-  const [taskResp, setTaskResp] = useState('Ana Silva');
+  const [taskResp, setTaskResp] = useState(isDatabaseMode ? (dbMembers[0]?.name || '') : 'Ana Silva');
   const [taskPriority, setTaskPriority] = useState<TaskPriority>('medium');
   const [taskDueDate, setTaskDueDate] = useState('');
   const [taskDesc, setTaskDesc] = useState('');
+
+  // Update taskResp default once dbMembers load
+  React.useEffect(() => {
+    if (isDatabaseMode && dbMembers.length > 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setTaskResp(dbMembers[0].name);
+    }
+  }, [isDatabaseMode, dbMembers]);
 
   // Publication comment states
   const [pubComment, setPubComment] = useState<Record<string, string>>({});
@@ -102,17 +153,31 @@ export default function ClientProfilePage() {
   // Mock auto filling updated link input states when onboarding state loads
   React.useEffect(() => {
     if (onboarding) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setDriveLink(onboarding.links.googleDrive || '');
-      setClickupLink(onboarding.links.clickup || '');
-      setWhatsappLink(onboarding.links.whatsAppGroup || '');
+      Promise.resolve().then(() => {
+        setDriveLink(onboarding.links.googleDrive || '');
+        setClickupLink(onboarding.links.clickup || '');
+        setWhatsappLink(onboarding.links.whatsAppGroup || '');
+      });
     }
   }, [onboarding]);
 
-  if (!mounted) {
+  if (!mounted || (isDatabaseMode && isLoadingDb && !dbClient)) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-primary" />
+      </div>
+    );
+  }
+
+  if (errorMsg) {
+    return (
+      <div className="text-center py-12">
+        <ShieldAlert className="h-12 w-12 mx-auto text-danger mb-4" />
+        <h2 className="text-lg font-bold text-foreground">Não foi possível carregar este cliente</h2>
+        <p className="text-muted-foreground mt-2">{errorMsg}</p>
+        <Button onClick={() => router.push('/clientes')} className="mt-4">
+          Voltar para Clientes
+        </Button>
       </div>
     );
   }
@@ -122,7 +187,7 @@ export default function ClientProfilePage() {
       <div className="text-center py-12">
         <ShieldAlert className="h-12 w-12 mx-auto text-danger mb-4" />
         <h2 className="text-lg font-bold text-foreground">Cliente não encontrado</h2>
-        <p className="text-muted-foreground mt-2">O cliente solicitado não existe no sistema.</p>
+        <p className="text-muted-foreground mt-2">O cliente solicitado não existe ou não pertence à organização ativa.</p>
         <Button onClick={() => router.push('/clientes')} className="mt-4">
           Voltar para Clientes
         </Button>
@@ -135,8 +200,8 @@ export default function ClientProfilePage() {
   const clientContract = contracts.find(c => c.clientId === clientId);
   const clientCharges = charges.filter(c => c.clientId === clientId);
   const clientPublications = publications.filter(p => p.clientId === clientId);
-  const clientTasks = tasks.filter(t => t.clientId === clientId);
-  const clientHistory = historyEvents.filter(h => h.clientId === clientId);
+  const clientTasks = isDatabaseMode ? dbTasks : tasks.filter(t => t.clientId === clientId);
+  const clientHistory = isDatabaseMode ? dbHistory : historyEvents.filter(h => h.clientId === clientId);
 
   // Actions
   const handleSaveOnboardingLinks = (e: React.FormEvent) => {
@@ -149,35 +214,76 @@ export default function ClientProfilePage() {
     alert('Links salvos e atualizados com sucesso! 📁');
   };
 
-  const handleCreateTask = (e: React.FormEvent) => {
+  const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!taskTitle || !taskDueDate) return;
     
-    const result = addTask({
-      title: taskTitle,
-      clientId: client.id,
-      clientName: client.companyName,
-      responsibleUser: taskResp,
-      dueDate: taskDueDate,
-      status: 'pending',
-      priority: taskPriority,
-      description: taskDesc
-    });
+    if (isDatabaseMode) {
+      try {
+        setIsLoadingDb(true);
+        await createTask({
+          title: taskTitle,
+          clientId: clientId,
+          responsibleUser: taskResp,
+          dueDate: taskDueDate,
+          priority: taskPriority,
+          description: taskDesc
+        });
+        await loadDbData();
+        setTaskTitle('');
+        setTaskDueDate('');
+        setTaskDesc('');
+        setIsTaskModalOpen(false);
+      } catch (err) {
+        alert(err instanceof Error ? err.message : 'Erro ao criar tarefa.');
+      } finally {
+        setIsLoadingDb(false);
+      }
+    } else {
+      const result = addTask({
+        title: taskTitle,
+        clientId: client.id,
+        clientName: client.companyName,
+        responsibleUser: taskResp,
+        dueDate: taskDueDate,
+        status: 'pending',
+        priority: taskPriority,
+        description: taskDesc
+      });
 
-    if (!result) {
-      alert('Limite do Plano Atingido! Faça o upgrade do seu plano nas Configurações para continuar criando mais tarefas.');
-      return;
+      if (!result) {
+        alert('Limite do Plano Atingido! Faça o upgrade do seu plano nas Configurações para continuar criando mais tarefas.');
+        return;
+      }
+
+      setTaskTitle('');
+      setTaskDueDate('');
+      setTaskDesc('');
+      setIsTaskModalOpen(false);
     }
-
-    setTaskTitle('');
-    setTaskDueDate('');
-    setTaskDesc('');
-    setIsTaskModalOpen(false);
   };
 
+  const handleUpdateTaskStatus = async (taskId: string, status: TaskStatus) => {
+    if (isDatabaseMode) {
+      try {
+        setIsLoadingDb(true);
+        await updateTask(taskId, { status });
+        await loadDbData();
+      } catch (err) {
+        alert(err instanceof Error ? err.message : 'Erro ao atualizar tarefa.');
+      } finally {
+        setIsLoadingDb(false);
+      }
+    } else {
+      updateTaskStatus(taskId, status);
+    }
+  };
 
-
-  const teamOptions = teamMembers.map(m => ({ value: m.name, label: m.name }));
+  const teamOptions = isDatabaseMode
+    ? (dbMembers.length > 0 
+        ? dbMembers.map(m => ({ value: m.name, label: m.name }))
+        : [{ value: '', label: 'Nenhum usuário encontrado nesta empresa' }])
+    : teamMembers.map(m => ({ value: m.name, label: m.name }));
   const priorityOptions = [
     { value: 'low', label: 'Baixa' },
     { value: 'medium', label: 'Média' },
@@ -938,7 +1044,7 @@ export default function ClientProfilePage() {
                                 <Button 
                                   variant="outline" 
                                   size="sm" 
-                                  onClick={() => updateTaskStatus(task.id, 'completed')}
+                                  onClick={() => handleUpdateTaskStatus(task.id, 'completed')}
                                   className="h-8 text-xs gap-1 border-success/35 hover:bg-success/5 text-success-foreground hover:text-success-foreground"
                                 >
                                   <Check className="h-3.5 w-3.5 text-success" /> Concluir
@@ -979,7 +1085,7 @@ export default function ClientProfilePage() {
                             <Button 
                               variant="outline" 
                               size="sm" 
-                              onClick={() => updateTaskStatus(task.id, 'completed')}
+                              onClick={() => handleUpdateTaskStatus(task.id, 'completed')}
                               className="h-7 text-[10px] gap-1 border-success/35 hover:bg-success/5 text-success-foreground"
                             >
                               <Check className="h-3 w-3" /> Concluir

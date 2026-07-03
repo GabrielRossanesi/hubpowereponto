@@ -3,7 +3,7 @@
 import prisma from '../../lib/prisma';
 import { getSession, validateTenantAccess, getActiveOrganizationId } from '../../lib/tenant';
 import { isDatabaseDataMode } from '../../lib/data-mode';
-import type { Client, ClientStatus } from '../../types';
+import type { Client, ClientStatus, TaskStatus, TaskPriority } from '../../types';
 
 // Helper to check if the 'clients' feature is enabled for the organization
 async function checkClientsFeature(organizationId: string) {
@@ -376,5 +376,112 @@ export async function getTenantMembers(): Promise<{ id: string; name: string }[]
   } catch (error) {
     console.error('Error fetching tenant members:', error);
     return [];
+  }
+}
+
+export async function getClientById(clientId: string): Promise<Client | null> {
+  if (!isDatabaseDataMode) return null;
+
+  try {
+    const activeOrgId = await getActiveOrganizationId();
+    await validateTenantAccess(activeOrgId);
+
+    const client = await prisma.client.findFirst({
+      where: {
+        id: clientId,
+        organizationId: activeOrgId,
+        archivedAt: null,
+      },
+    });
+
+    if (!client) return null;
+    return mapDbClientToClient(client);
+  } catch (error) {
+    console.error('Error in getClientById:', error);
+    return null;
+  }
+}
+
+export async function getClientProfileDbData(clientId: string) {
+  if (!isDatabaseDataMode) {
+    return { success: false, error: 'Apenas em modo database.' };
+  }
+
+  try {
+    const activeOrgId = await getActiveOrganizationId();
+    await validateTenantAccess(activeOrgId);
+
+    // 1. Fetch Client
+    const client = await getClientById(clientId);
+    if (!client) {
+      return { success: false, error: 'Cliente não encontrado ou não pertence à organização ativa.' };
+    }
+
+    // 2. Fetch Tasks
+    const dbTasks = await prisma.task.findMany({
+      where: {
+        clientId,
+        organizationId: activeOrgId,
+        archivedAt: null,
+      },
+      include: {
+        assignedUser: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    const tasks = dbTasks.map((t) => ({
+      id: t.id,
+      organizationId: t.organizationId,
+      clientId: t.clientId || '',
+      clientName: client.companyName,
+      title: t.title,
+      description: t.description || '',
+      status: t.status as TaskStatus,
+      priority: t.priority as TaskPriority,
+      dueDate: t.dueDate ? t.dueDate.toISOString().split('T')[0] : '',
+      completedAt: t.completedAt ? t.completedAt.toISOString() : undefined,
+      responsibleUser: t.assignedUser?.name || 'Ana Silva',
+      createdAt: t.createdAt.toISOString(),
+    }));
+
+    // 3. Fetch History (Audit Logs)
+    const dbAuditLogs = await prisma.auditLog.findMany({
+      where: {
+        target: clientId,
+        organizationId: activeOrgId,
+      },
+      include: {
+        user: true,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    const history = dbAuditLogs.map((log) => ({
+      id: log.id,
+      title: log.action === 'CLIENT_CREATED' ? 'Cliente Cadastrado' : log.action === 'CLIENT_UPDATED' ? 'Cadastro Atualizado' : log.action,
+      description: `Ação realizada por ${log.user.name || log.user.email}`,
+      type: 'client_created' as const,
+      organizationId: log.organizationId,
+      clientId,
+      createdAt: log.createdAt.toISOString(),
+    }));
+
+    return {
+      success: true,
+      client,
+      tasks,
+      history,
+    };
+  } catch (error) {
+    console.error('Error in getClientProfileDbData:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Erro ao obter dados do cliente.'
+    };
   }
 }
