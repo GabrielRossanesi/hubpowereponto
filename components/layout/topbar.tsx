@@ -6,6 +6,9 @@ import { Menu, Bell, Search, LogOut } from 'lucide-react';
 import ThemeToggle from '../ui/theme-toggle';
 import Button from '../ui/button';
 
+import { signOut } from '../../lib/auth-client';
+import { isDatabaseDataMode } from '../../lib/data-mode';
+
 interface TopbarProps {
   onMenuClick: () => void;
 }
@@ -13,9 +16,23 @@ interface TopbarProps {
 export function Topbar({ onMenuClick }: TopbarProps) {
   const router = useRouter();
 
-  const handleLogout = () => {
-    // Simulated logout by redirecting to login page
-    router.push('/login');
+  const handleLogout = async () => {
+    if (isDatabaseDataMode) {
+      try {
+        await signOut({
+          fetchOptions: {
+            onSuccess: () => {
+              router.push('/login');
+            }
+          }
+        });
+      } catch (err) {
+        console.error('Erro ao realizar logout real:', err);
+        router.push('/login');
+      }
+    } else {
+      router.push('/login');
+    }
   };
 
   return (

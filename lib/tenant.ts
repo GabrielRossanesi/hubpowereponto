@@ -1,6 +1,7 @@
 import { headers } from 'next/headers';
 import prisma from './prisma';
 import { auth } from './auth';
+import { isDatabaseDataMode } from './data-mode';
 
 // Structure of returned session from helpers
 export interface TenantSession {
@@ -26,7 +27,7 @@ export interface TenantMembership {
   userId: string;
 }
 
-const isDatabaseMode = process.env.NEXT_PUBLIC_DATA_MODE === 'database';
+const isDatabaseMode = isDatabaseDataMode;
 
 /**
  * Gets the active session from Better Auth (or a mock session in sandbox mode).

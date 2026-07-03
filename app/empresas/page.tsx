@@ -29,11 +29,13 @@ import Input from '../../components/ui/input';
 import Select from '../../components/ui/select';
 import Textarea from '../../components/ui/textarea';
 
+import { isDatabaseDataMode } from '../../lib/data-mode';
+
 export default function EmpresasAdminPage() {
   const mounted = useMounted();
   const router = useRouter();
 
-  const isDatabaseMode = process.env.NEXT_PUBLIC_DATA_MODE === 'database';
+  const isDatabaseMode = isDatabaseDataMode;
   useSession(); // Hook registration to trigger session logic
 
   const [realOrgs, setRealOrgs] = useState<(Organization & {
