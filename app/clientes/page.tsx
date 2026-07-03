@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { Plus, Search, Filter, Eye, Building2, SearchCode } from 'lucide-react';
+import { Plus, Search, Filter, Eye, Building2, SearchCode, Edit3, Archive, RotateCcw } from 'lucide-react';
 import { useTenantStore } from '../../lib/store';
 import { useMounted } from '../../hooks/useMounted';
 import { PageHeader as UIHeader } from '../../components/ui/page-header';
@@ -15,17 +15,27 @@ import Card, { CardContent } from '../../components/ui/card';
 import Table, { TableHeader, TableBody, TableRow, TableHead, TableCell } from '../../components/ui/table';
 import StatusBadge from '../../components/ui/status-badge';
 import EmptyState from '../../components/ui/empty-state';
-import { ClientStatus } from '../../types';
+import { ClientStatus, Client } from '../../types';
+import { isDatabaseDataMode } from '../../lib/data-mode';
+import { getClients, createClient, updateClient, archiveClient, restoreClient } from './actions';
 
 export default function ClientesPage() {
   const mounted = useMounted();
-  const { clients, addClient, teamMembers, simulateCnpjSearch, checkLimit } = useTenantStore();
-  
-  // States
+  const isDatabaseMode = isDatabaseDataMode;
+
+  // Sandbox Store
+  const sandboxStore = useTenantStore();
+
+  // Database States
+  const [dbClients, setDbClients] = useState<Client[]>([]);
+  const [isLoading, setIsLoading] = useState(isDatabaseMode);
+
+  // Common UI States
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
-  
+  const [editingClient, setEditingClient] = useState<Client | null>(null);
+
   // Form States
   const [nome, setNome] = useState('');
   const [empresa, setEmpresa] = useState('');
@@ -35,12 +45,47 @@ export default function ClientesPage() {
   const [responsavel, setResponsavel] = useState('Ana Silva');
   const [status, setStatus] = useState<ClientStatus>('lead');
   const [observacoes, setObservacoes] = useState('');
-  
-  // CNPJ status states
+
+  // CNPJ search simulation states
   const [isSearchingCnpj, setIsSearchingCnpj] = useState(false);
   const [cnpjSearchMessage, setCnpjSearchMessage] = useState('');
 
-  if (!mounted) {
+  // Load clients in database mode
+  const loadClients = useCallback(async () => {
+    if (!isDatabaseMode) return;
+    try {
+      const fetched = await getClients(true); // Include archived for client-side status filtering
+      setDbClients(fetched);
+    } catch (err) {
+      console.error('Erro ao carregar clientes:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [isDatabaseMode]);
+
+  useEffect(() => {
+    let active = true;
+    if (isDatabaseMode) {
+      const fetchInitial = async () => {
+        try {
+          const fetched = await getClients(true);
+          if (active) {
+            setDbClients(fetched);
+            setIsLoading(false);
+          }
+        } catch (err) {
+          console.error('Erro ao carregar clientes inicialmente:', err);
+          if (active) setIsLoading(false);
+        }
+      };
+      fetchInitial();
+    }
+    return () => {
+      active = false;
+    };
+  }, [isDatabaseMode]);
+
+  if (!mounted || (isDatabaseMode && isLoading && dbClients.length === 0)) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-primary" />
@@ -48,15 +93,22 @@ export default function ClientesPage() {
     );
   }
 
-  // Filter clients
-  const filteredClients = clients.filter((client) => {
+  // Active client list based on mode
+  const activeClients = isDatabaseMode ? dbClients : sandboxStore.clients;
+
+  // Filter clients locally
+  const filteredClients = activeClients.filter((client) => {
     const matchesSearch = 
       client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       client.companyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       client.cnpj.replace(/\D/g, '').includes(searchTerm.replace(/\D/g, '')) ||
       client.email.toLowerCase().includes(searchTerm.toLowerCase());
       
-    const matchesStatus = statusFilter === 'all' || client.commercialStatus === statusFilter;
+    // If 'all', hide archived ones in database mode
+    const matchesStatus = 
+      statusFilter === 'all'
+        ? client.commercialStatus !== 'archived'
+        : client.commercialStatus === statusFilter;
     
     return matchesSearch && matchesStatus;
   });
@@ -64,7 +116,7 @@ export default function ClientesPage() {
   // Handle CNPJ search simulation
   const handleCnpjSearch = () => {
     if (!cnpj) {
-      setCnpjSearchMessage('Digite um CNPJ para consultar.');
+      setCnpjSearchMessage('Digite um documento para consultar.');
       return;
     }
     
@@ -72,7 +124,7 @@ export default function ClientesPage() {
     setCnpjSearchMessage('');
     
     setTimeout(() => {
-      const result = simulateCnpjSearch(cnpj);
+      const result = sandboxStore.simulateCnpjSearch(cnpj);
       setIsSearchingCnpj(false);
       
       if (result) {
@@ -85,35 +137,13 @@ export default function ClientesPage() {
         );
         setCnpjSearchMessage('Dados preenchidos automaticamente! ✅');
       } else {
-        setCnpjSearchMessage('CNPJ inválido ou não encontrado.');
+        setCnpjSearchMessage('Documento inválido ou simulado não encontrado.');
       }
     }, 1000);
   };
 
-  const handleSaveClient = (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!nome || !empresa || !cnpj || !email) {
-      return;
-    }
-    
-    const result = addClient({
-      name: nome,
-      companyName: empresa,
-      cnpj: cnpj,
-      phone: telefone,
-      email: email,
-      responsibleUser: responsavel,
-      commercialStatus: status,
-      notes: observacoes
-    });
-    
-    if (!result) {
-      alert('Limite do Plano Atingido! Faça o upgrade do seu plano nas Configurações para continuar cadastrando mais clientes.');
-      return;
-    }
-    
-    // Reset form & close
+  const handleOpenCreateModal = () => {
+    setEditingClient(null);
     setNome('');
     setEmpresa('');
     setCnpj('');
@@ -123,25 +153,146 @@ export default function ClientesPage() {
     setStatus('lead');
     setObservacoes('');
     setCnpjSearchMessage('');
-    setIsModalOpen(false);
+    setIsModalOpen(true);
   };
 
-  const teamOptions = teamMembers.map(m => ({ value: m.name, label: m.name }));
-  const statusOptions = [
-    { value: 'lead', label: 'Lead' },
-    { value: 'onboarding', label: 'Onboarding' },
-    { value: 'active', label: 'Ativo' },
-    { value: 'inactive', label: 'Inativo' }
-  ];
+  const handleOpenEditModal = (client: Client) => {
+    setEditingClient(client);
+    setNome(client.name);
+    setEmpresa(client.companyName);
+    setCnpj(client.cnpj);
+    setTelefone(client.phone);
+    setEmail(client.email);
+    setResponsavel(client.responsibleUser);
+    setStatus(client.commercialStatus);
+    setObservacoes(client.notes || '');
+    setCnpjSearchMessage('');
+    setIsModalOpen(true);
+  };
+
+  const handleArchiveClient = async (id: string) => {
+    if (!window.confirm('Tem certeza que deseja arquivar este cliente?')) return;
+    try {
+      setIsLoading(true);
+      await archiveClient(id);
+      await loadClients();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Erro ao arquivar cliente.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleRestoreClient = async (id: string) => {
+    try {
+      setIsLoading(true);
+      await restoreClient(id);
+      await loadClients();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Erro ao restaurar cliente.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSaveClient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    // Validations
+    if (!empresa.trim()) {
+      alert('Razão Social / Nome da Empresa é obrigatório.');
+      return;
+    }
+    if (!nome.trim()) {
+      alert('Nome do Contato Principal é obrigatório.');
+      return;
+    }
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      alert('Por favor, informe um e-mail em formato válido.');
+      return;
+    }
+
+    if (isDatabaseMode) {
+      setIsLoading(true);
+      try {
+        const payload = {
+          name: nome,
+          companyName: empresa,
+          cnpj: cnpj,
+          phone: telefone,
+          email: email,
+          responsibleUser: responsavel,
+          commercialStatus: status,
+          notes: observacoes
+        };
+
+        if (editingClient) {
+          await updateClient(editingClient.id, payload);
+        } else {
+          await createClient(payload);
+        }
+
+        await loadClients();
+        setIsModalOpen(false);
+      } catch (err) {
+        alert(err instanceof Error ? err.message : 'Erro ao salvar cliente.');
+      } finally {
+        setIsLoading(false);
+      }
+    } else {
+      // Sandbox mode original logic (with fallback validations)
+      if (!nome || !empresa || !cnpj || !email) {
+        alert('Nome, empresa, CNPJ e e-mail são obrigatórios no modo sandbox.');
+        return;
+      }
+
+      const result = sandboxStore.addClient({
+        name: nome,
+        companyName: empresa,
+        cnpj: cnpj,
+        phone: telefone,
+        email: email,
+        responsibleUser: responsavel,
+        commercialStatus: status,
+        notes: observacoes
+      });
+      
+      if (!result) {
+        alert('Limite do Plano Atingido! Faça o upgrade do seu plano nas Configurações para continuar.');
+        return;
+      }
+      setIsModalOpen(false);
+    }
+  };
+
+  const teamOptions = sandboxStore.teamMembers.map(m => ({ value: m.name, label: m.name }));
+  const statusOptions = isDatabaseMode
+    ? [
+        { value: 'lead', label: 'Lead' },
+        { value: 'onboarding', label: 'Onboarding' },
+        { value: 'active', label: 'Ativo' },
+        { value: 'inactive', label: 'Inativo' },
+        { value: 'archived', label: 'Arquivado' }
+      ]
+    : [
+        { value: 'lead', label: 'Lead' },
+        { value: 'onboarding', label: 'Onboarding' },
+        { value: 'active', label: 'Ativo' },
+        { value: 'inactive', label: 'Inativo' }
+      ];
+
+  const statusFiltersList = isDatabaseMode
+    ? ['all', 'lead', 'onboarding', 'active', 'inactive', 'archived']
+    : ['all', 'lead', 'onboarding', 'active', 'inactive'];
 
   return (
     <div className="space-y-6">
       {/* Page Header */}
       <UIHeader 
         title="Gestão de Clientes" 
-        description="Visualize e cadastre os clientes corporativos da sua carteira."
+        description={isDatabaseMode ? "Acompanhe e administre clientes reais cadastrados no PostgreSQL." : "Visualize e cadastre os clientes corporativos da sua carteira."}
         actions={
-          <Button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2">
+          <Button onClick={handleOpenCreateModal} className="flex items-center gap-2">
             <Plus className="h-4 w-4" /> Novo Cliente
           </Button>
         }
@@ -154,7 +305,7 @@ export default function ClientesPage() {
           <Search className="absolute left-3 h-4 w-4 text-muted-foreground" />
           <input
             type="text"
-            placeholder="Pesquisar por nome, empresa, CNPJ..."
+            placeholder={isDatabaseMode ? "Pesquisar por nome, empresa, documento..." : "Pesquisar por nome, empresa, CNPJ..."}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="h-10 w-full pl-9 pr-3 rounded-lg border border-border bg-background text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:border-primary transition-all placeholder:text-muted-foreground/75"
@@ -165,7 +316,7 @@ export default function ClientesPage() {
         <div className="flex items-center gap-3 w-full md:w-auto">
           <Filter className="h-4 w-4 text-muted-foreground shrink-0" />
           <div className="flex gap-1.5 overflow-x-auto w-full md:w-auto">
-            {['all', 'lead', 'onboarding', 'active', 'inactive'].map((statusKey) => (
+            {statusFiltersList.map((statusKey) => (
               <button
                 key={statusKey}
                 onClick={() => setStatusFilter(statusKey)}
@@ -180,6 +331,7 @@ export default function ClientesPage() {
                 {statusKey === 'onboarding' && 'Onboarding'}
                 {statusKey === 'active' && 'Ativos'}
                 {statusKey === 'inactive' && 'Inativos'}
+                {statusKey === 'archived' && 'Arquivados'}
               </button>
             ))}
           </div>
@@ -192,10 +344,10 @@ export default function ClientesPage() {
           {filteredClients.length === 0 ? (
             <div className="p-12">
               <EmptyState 
-                title="Nenhum cliente encontrado" 
-                description="Experimente ajustar a busca ou clique no botão acima para cadastrar um novo cliente."
-                actionLabel="Cadastrar Cliente"
-                onAction={() => setIsModalOpen(true)}
+                title={isDatabaseMode ? "Nenhum cliente cadastrado ainda." : "Nenhum cliente encontrado"} 
+                description={isDatabaseMode ? "Cadastre seu primeiro cliente para começar a organizar sua operação." : "Experimente ajustar a busca ou clique no botão acima para cadastrar um novo cliente."}
+                actionLabel={isDatabaseMode ? "Cadastrar cliente" : "Cadastrar Cliente"}
+                onAction={handleOpenCreateModal}
                 icon={<Building2 className="h-6 w-6" />}
               />
             </div>
@@ -208,7 +360,7 @@ export default function ClientesPage() {
                     <TableRow>
                       <TableHead>Empresa / Razão Social</TableHead>
                       <TableHead>Contato Principal</TableHead>
-                      <TableHead>CNPJ</TableHead>
+                      <TableHead>{isDatabaseMode ? "Documento" : "CNPJ"}</TableHead>
                       <TableHead>Responsável</TableHead>
                       <TableHead>Status Comercial</TableHead>
                       <TableHead className="text-right">Ações</TableHead>
@@ -219,13 +371,13 @@ export default function ClientesPage() {
                       <TableRow key={client.id}>
                         <TableCell>
                           <div className="font-semibold text-foreground">{client.companyName}</div>
-                          <div className="text-xs text-muted-foreground">{client.email}</div>
+                          <div className="text-xs text-muted-foreground">{client.email || 'Sem e-mail'}</div>
                         </TableCell>
                         <TableCell>
                           <div className="text-foreground font-medium">{client.name}</div>
-                          <div className="text-xs text-muted-foreground">{client.phone}</div>
+                          <div className="text-xs text-muted-foreground">{client.phone || 'Sem telefone'}</div>
                         </TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">{client.cnpj}</TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">{client.cnpj || 'Não informado'}</TableCell>
                         <TableCell>
                           <div className="text-xs font-medium text-foreground">{client.responsibleUser}</div>
                         </TableCell>
@@ -233,11 +385,46 @@ export default function ClientesPage() {
                           <StatusBadge type="client" status={client.commercialStatus} />
                         </TableCell>
                         <TableCell className="text-right">
-                          <Link href={`/clientes/${client.id}`}>
-                            <Button variant="outline" size="sm" className="h-8 gap-1.5">
-                              <Eye className="h-3.5 w-3.5" /> Detalhes
-                            </Button>
-                          </Link>
+                          <div className="flex justify-end gap-1.5">
+                            <Link href={`/clientes/${client.id}`}>
+                              <Button variant="outline" size="sm" className="h-8 gap-1.5">
+                                <Eye className="h-3.5 w-3.5" /> Detalhes
+                              </Button>
+                            </Link>
+
+                            {isDatabaseMode && (
+                              <>
+                                <Button 
+                                  variant="outline" 
+                                  size="sm" 
+                                  className="h-8 gap-1 border-primary/30 text-primary hover:bg-primary/5"
+                                  onClick={() => handleOpenEditModal(client)}
+                                >
+                                  <Edit3 className="h-3.5 w-3.5" /> Editar
+                                </Button>
+
+                                {client.commercialStatus === 'archived' ? (
+                                  <Button 
+                                    variant="outline" 
+                                    size="sm" 
+                                    className="h-8 gap-1 border-success/30 text-success hover:bg-success/5"
+                                    onClick={() => handleRestoreClient(client.id)}
+                                  >
+                                    <RotateCcw className="h-3.5 w-3.5" /> Restaurar
+                                  </Button>
+                                ) : (
+                                  <Button 
+                                    variant="outline" 
+                                    size="sm" 
+                                    className="h-8 gap-1 border-danger/30 text-danger hover:bg-danger/5"
+                                    onClick={() => handleArchiveClient(client.id)}
+                                  >
+                                    <Archive className="h-3.5 w-3.5" /> Arquivar
+                                  </Button>
+                                )}
+                              </>
+                            )}
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -252,7 +439,7 @@ export default function ClientesPage() {
                     <div className="flex items-center justify-between gap-2">
                       <div>
                         <span className="font-semibold text-sm text-foreground block">{client.companyName}</span>
-                        <span className="text-[10px] text-muted-foreground font-mono">CNPJ: {client.cnpj}</span>
+                        <span className="text-[10px] text-muted-foreground font-mono">Doc: {client.cnpj || 'Não informado'}</span>
                       </div>
                       <StatusBadge type="client" status={client.commercialStatus} />
                     </div>
@@ -264,11 +451,11 @@ export default function ClientesPage() {
                       </div>
                       <div className="p-2 bg-muted/20 border border-border/40 rounded-lg">
                         <span className="text-[10px] text-muted-foreground block">Telefone</span>
-                        <strong className="text-foreground text-xs block mt-0.5 truncate">{client.phone}</strong>
+                        <strong className="text-foreground text-xs block mt-0.5 truncate">{client.phone || 'N/A'}</strong>
                       </div>
                       <div className="p-2 bg-muted/20 border border-border/40 rounded-lg col-span-2">
                         <span className="text-[10px] text-muted-foreground block">Email</span>
-                        <strong className="text-foreground text-[11px] block mt-0.5 truncate">{client.email}</strong>
+                        <strong className="text-foreground text-[11px] block mt-0.5 truncate">{client.email || 'N/A'}</strong>
                       </div>
                       <div className="p-2 bg-muted/20 border border-border/40 rounded-lg">
                         <span className="text-[10px] text-muted-foreground block">Responsável</span>
@@ -276,12 +463,45 @@ export default function ClientesPage() {
                       </div>
                     </div>
 
-                    <div className="flex justify-end pt-1">
-                      <Link href={`/clientes/${client.id}`} className="w-full">
+                    <div className="flex gap-2 pt-1">
+                      <Link href={`/clientes/${client.id}`} className="flex-1">
                         <Button variant="outline" size="sm" className="w-full h-8.5 text-xs gap-1.5">
-                          <Eye className="h-3.5 w-3.5" /> Detalhes do Cliente
+                          <Eye className="h-3.5 w-3.5" /> Detalhes
                         </Button>
                       </Link>
+
+                      {isDatabaseMode && (
+                        <>
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="h-8.5 text-xs gap-1 border-primary/30 text-primary"
+                            onClick={() => handleOpenEditModal(client)}
+                          >
+                            <Edit3 className="h-3.5 w-3.5" />
+                          </Button>
+
+                          {client.commercialStatus === 'archived' ? (
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              className="h-8.5 text-xs gap-1 border-success/30 text-success"
+                              onClick={() => handleRestoreClient(client.id)}
+                            >
+                              <RotateCcw className="h-3.5 w-3.5" />
+                            </Button>
+                          ) : (
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              className="h-8.5 text-xs gap-1 border-danger/30 text-danger"
+                              onClick={() => handleArchiveClient(client.id)}
+                            >
+                              <Archive className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -291,30 +511,30 @@ export default function ClientesPage() {
         </CardContent>
       </Card>
 
-      {/* Register Client Modal */}
+      {/* Register/Edit Client Modal */}
       <Modal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        title="Cadastrar Novo Cliente"
-        description="Preencha os dados cadastrais. Você pode usar o preenchimento por CNPJ para acelerar."
+        title={editingClient ? "Editar Cliente" : "Cadastrar Novo Cliente"}
+        description={isDatabaseMode ? "Insira os dados da empresa e contato operacional." : "Preencha os dados cadastrais. Você pode usar o preenchimento por CNPJ para acelerar."}
         size="lg"
       >
         <form onSubmit={handleSaveClient} className="space-y-4 pt-2">
-          {!checkLimit('clients') && (
+          {(!isDatabaseMode && !sandboxStore.checkLimit('clients')) && (
             <div className="p-3 bg-danger/10 border border-danger/20 text-danger text-xs font-semibold rounded-lg">
               Aviso: O limite de clientes do seu plano foi atingido. Faça o upgrade nas Configurações para continuar.
             </div>
           )}
-          {/* CNPJ Field with autofill button */}
+          {/* CNPJ / Document Field with autofill button */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
             <div className="md:col-span-2">
               <Input
-                label="CNPJ da Empresa"
+                label={isDatabaseMode ? "Documento (Opcional)" : "CNPJ da Empresa"}
                 type="text"
-                placeholder="00.000.000/0000-00"
+                placeholder={isDatabaseMode ? "CPF ou CNPJ" : "00.000.000/0000-00"}
                 value={cnpj}
                 onChange={(e) => setCnpj(e.target.value)}
-                required
+                required={!isDatabaseMode}
               />
             </div>
             <div>
@@ -325,7 +545,7 @@ export default function ClientesPage() {
                 onClick={handleCnpjSearch}
                 isLoading={isSearchingCnpj}
               >
-                <SearchCode className="h-4 w-4 text-primary" /> Consultar CNPJ
+                <SearchCode className="h-4 w-4 text-primary" /> Consultar
               </Button>
             </div>
           </div>
@@ -357,12 +577,12 @@ export default function ClientesPage() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Input
-              label="E-mail de Contato"
-              type="email"
+              label={isDatabaseMode ? "E-mail de Contato (Opcional)" : "E-mail de Contato"}
+              type="text"
               placeholder="contato@empresa.com.br"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              required
+              required={!isDatabaseMode}
             />
             <Input
               label="Telefone / WhatsApp"
@@ -401,7 +621,7 @@ export default function ClientesPage() {
               Cancelar
             </Button>
             <Button type="submit">
-              Gravar Cliente
+              {editingClient ? "Salvar Alterações" : "Gravar Cliente"}
             </Button>
           </div>
         </form>

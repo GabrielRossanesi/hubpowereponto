@@ -22,7 +22,8 @@ export function StatusBadge({ type, status }: StatusBadgeProps) {
       lead: { label: 'Lead', variant: 'warning' },
       onboarding: { label: 'Onboarding', variant: 'info' },
       active: { label: 'Ativo', variant: 'success' },
-      inactive: { label: 'Inativo', variant: 'danger' }
+      inactive: { label: 'Inativo', variant: 'danger' },
+      archived: { label: 'Arquivado', variant: 'muted' }
     };
     if (mapping[s]) {
       label = mapping[s].label;
@@ -121,7 +122,9 @@ export function StatusBadge({ type, status }: StatusBadgeProps) {
       in_progress: { label: 'Em Andamento', variant: 'info' },
       in_review: { label: 'Em Revisão', variant: 'warning' },
       completed: { label: 'Concluída', variant: 'success' },
-      overdue: { label: 'Atrasada', variant: 'danger' }
+      overdue: { label: 'Atrasada', variant: 'danger' },
+      cancelled: { label: 'Cancelada', variant: 'danger' },
+      archived: { label: 'Arquivada', variant: 'muted' }
     };
     if (mapping[s]) {
       label = mapping[s].label;

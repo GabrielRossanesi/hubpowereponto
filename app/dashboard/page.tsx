@@ -15,7 +15,9 @@ import PageHeader from '../../components/ui/page-header';
 import Sparkline from '../../components/ui/sparkline';
 import Card, { CardHeader, CardTitle, CardContent } from '../../components/ui/card';
 import StatusBadge from '../../components/ui/status-badge';
-import { FinancialEntry } from '../../types';
+import { FinancialEntry, Client, TeamTask } from '../../types';
+import { getClients } from '../clientes/actions';
+import { getTasks } from '../tarefas/actions';
 
 // Helper function to dynamically generate sparkline points from mock data dates
 function getSparklinePoints<T>(
@@ -118,6 +120,16 @@ export default function DashboardPage() {
   const dashboardFeatures = isDatabaseMode
     ? databaseTenantContext?.features
     : currentFeatures;
+
+  const [realClients, setRealClients] = React.useState<Client[]>([]);
+  const [realTasks, setRealTasks] = React.useState<TeamTask[]>([]);
+
+  React.useEffect(() => {
+    if (isDatabaseMode) {
+      getClients().then(setRealClients).catch(err => console.error('Erro ao carregar clientes no dashboard:', err));
+      getTasks().then(setRealTasks).catch(err => console.error('Erro ao carregar tarefas no dashboard:', err));
+    }
+  }, [isDatabaseMode]);
 
   if (!mounted || (isDatabaseMode && isTenantContextLoading)) {
     return (
@@ -222,23 +234,29 @@ export default function DashboardPage() {
   const publicacoesComAlteracaoItems = publications.filter(p => p.status === 'changes_requested');
   const publicacoesComAlteracao = publicacoesComAlteracaoItems.length;
 
-  const tarefasPendentesItems = tasks.filter(t => t.status === 'pending' || t.status === 'in_progress' || t.status === 'in_review');
+  const activeTasksList = isDatabaseMode ? realTasks : tasks;
+
+  const tarefasPendentesItems = activeTasksList.filter(t => t.status === 'pending' || t.status === 'in_progress' || t.status === 'in_review');
   const tarefasPendentes = tarefasPendentesItems.length;
 
-  const tarefasAtrasadasItems = tasks.filter(t => t.status === 'overdue' || (t.status !== 'completed' && new Date(t.dueDate) < new Date()));
+  const tarefasAtrasadasItems = activeTasksList.filter(t => t.status === 'overdue' || (t.status !== 'completed' && t.dueDate && new Date(t.dueDate) < new Date()));
   const tarefasAtrasadas = tarefasAtrasadasItems.length;
 
   // Recent History (max 5)
   const recentActivities = historyEvents.slice(0, 5);
 
   // Near due tasks (max 4)
-  const upcomingTasks = tasks
-    .filter(t => t.status !== 'completed')
-    .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())
+  const upcomingTasks = activeTasksList
+    .filter(t => t.status !== 'completed' && t.status !== 'archived')
+    .sort((a, b) => {
+      if (!a.dueDate) return 1;
+      if (!b.dueDate) return -1;
+      return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+    })
     .slice(0, 4);
 
   // Top clients (max 4 active ones)
-  const highlightClients = clients
+  const highlightClients = (isDatabaseMode ? realClients : clients)
     .filter(c => c.commercialStatus === 'active' || c.commercialStatus === 'onboarding')
     .slice(0, 4);
 

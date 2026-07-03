@@ -24,6 +24,10 @@ import DatePicker from './date-picker';
 interface TaskCalendarProps {
   tasks: TeamTask[];
   updateTaskStatus: (taskId: string, status: TaskStatus) => void;
+  clients?: { id: string; companyName: string }[];
+  teamMembers?: { id: string; name: string }[];
+  updateTask?: (taskId: string, updates: Partial<TeamTask>) => void;
+  addTaskNote?: (taskId: string, content: string) => void;
 }
 
 const MONTH_NAMES = [
@@ -33,9 +37,15 @@ const MONTH_NAMES = [
 
 const WEEKDAY_NAMES = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
-export default function TaskCalendar({ tasks, updateTaskStatus }: TaskCalendarProps) {
+export default function TaskCalendar(props: TaskCalendarProps) {
+  const { tasks } = props;
   // Store actions & data
-  const { clients, teamMembers, updateTask, addTaskNote } = useTenantStore();
+  const store = useTenantStore();
+  const clients = props.clients || store.clients;
+  const teamMembers = props.teamMembers || store.teamMembers;
+  const updateTask = props.updateTask || store.updateTask;
+  const addTaskNote = props.addTaskNote || store.addTaskNote;
+  const updateTaskStatus = props.updateTaskStatus || store.updateTaskStatus;
 
   // Navigation states
   const [currentDate, setCurrentDate] = useState(() => new Date());

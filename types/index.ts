@@ -19,7 +19,7 @@ export interface PlanLimits {
   hasIntegrations: boolean;
 }
 
-export type ClientStatus = 'lead' | 'onboarding' | 'active' | 'inactive';
+export type ClientStatus = 'lead' | 'onboarding' | 'active' | 'inactive' | 'archived';
 
 export interface Client {
   id: string;
@@ -186,7 +186,7 @@ export interface Publication {
   platform?: 'instagram' | 'facebook' | 'linkedin' | 'tiktok' | 'google_business' | 'other';
 }
 
-export type TaskStatus = 'pending' | 'in_progress' | 'in_review' | 'completed' | 'overdue';
+export type TaskStatus = 'pending' | 'in_progress' | 'in_review' | 'completed' | 'overdue' | 'cancelled' | 'archived';
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 
 export interface TaskNote {

@@ -22,6 +22,8 @@ model User {
   accounts      Account[]
   memberships   Member[]
   auditLogs     AuditLog[]
+  assignedTasks Task[]     @relation("TaskAssignedUser")
+  taskNotes     TaskNote[] @relation("TaskNoteAuthor")
 
   @@map("user")
 }
@@ -86,6 +88,9 @@ model Organization {
   invitations Invitation[]
   features    OrganizationFeature?
   auditLogs   AuditLog[]
+  clients     Client[]
+  tasks       Task[]
+  taskNotes   TaskNote[]
 
   @@map("organization")
 }
@@ -155,4 +160,87 @@ model AuditLog {
   user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("audit_log")
+}
+
+// --- Client Model ---
+
+model Client {
+  id              String       @id @default(uuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  companyName     String
+  document        String?
+  documentType    String?      // "cpf", "cnpj", "other", opcional nesta fase
+  contactName     String?
+  email           String?
+  phone           String?
+  status          String       @default("active") // "active", "onboarding", "inactive", "archived"
+  notes           String?
+  responsibleUser String?
+
+  archivedAt      DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  tasks           Task[]
+
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@map("client")
+}
+
+// --- Task & TaskNote Models ---
+
+model Task {
+  id              String       @id @default(uuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  clientId        String?
+  client          Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  assignedUserId  String?
+  assignedUser    User?        @relation("TaskAssignedUser", fields: [assignedUserId], references: [id], onDelete: SetNull)
+
+  title           String
+  description     String?
+  status          String       @default("pending") // "pending", "in_progress", "in_review", "completed", "cancelled", "archived"
+  priority        String       @default("medium")  // "low", "medium", "high", "urgent"
+  dueDate         DateTime?
+  completedAt     DateTime?
+  archivedAt      DateTime?
+
+  notes           TaskNote[]
+
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([organizationId, dueDate])
+  @@index([organizationId, clientId])
+  @@index([organizationId, assignedUserId])
+  @@map("task")
+}
+
+model TaskNote {
+  id              String       @id @default(uuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  taskId          String
+  task            Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  authorUserId    String?
+  authorUser      User?        @relation("TaskNoteAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
+
+  authorName      String
+  content         String
+
+  createdAt       DateTime     @default(now())
+
+  @@index([organizationId])
+  @@index([taskId])
+  @@index([authorUserId])
+  @@map("task_note")
 }
