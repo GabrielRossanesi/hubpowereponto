@@ -122,13 +122,16 @@ export async function validateTenantAccess(organizationId: string): Promise<Tena
   };
 }
 
-/**
- * Checks if the current authenticated user has platform operator or administrator rights.
- */
 export async function isOperator(): Promise<boolean> {
   const session = await getSession();
   if (!session) return false;
 
-  const role = session.user.platformRole;
-  return role === 'operator' || role === 'platform_admin';
+  if (!isDatabaseMode) return true; // operator in sandbox mode
+
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: { platformRole: true },
+  });
+
+  return user?.platformRole === 'operator' || user?.platformRole === 'platform_admin';
 }
