@@ -8,8 +8,11 @@ export const auth = betterAuth({
     provider: 'postgresql',
   }),
   trustedOrigins: [
+    process.env.NEXT_PUBLIC_APP_URL,
+    process.env.BETTER_AUTH_URL,
+    'https://nvhub.vercel.app',
     'https://nvhub-g81cdeo9m-gabrielrossanesis-projects.vercel.app'
-  ],
+  ].filter(Boolean) as string[],
   emailAndPassword: {
     enabled: true,
     autoSignIn: true,

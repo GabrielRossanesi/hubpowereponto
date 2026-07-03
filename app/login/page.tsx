@@ -35,22 +35,25 @@ export default function LoginPage() {
     setError('');
 
     if (isDatabaseMode) {
-      await signIn.email({
-        email,
-        password,
-      }, {
-        onRequest: () => {
-          setIsLoading(true);
-        },
-        onSuccess: () => {
-          setIsLoading(false);
-          router.replace('/dashboard');
-        },
-        onError: () => {
+      try {
+        const { error: authError } = await signIn.email({
+          email,
+          password,
+        });
+
+        if (authError) {
           setError('Não foi possível entrar. Verifique suas credenciais e tente novamente.');
-          setIsLoading(false);
+          return;
         }
-      });
+
+        router.replace('/dashboard');
+        router.refresh();
+      } catch (err) {
+        console.error('Erro de login:', err);
+        setError('Não foi possível entrar. Verifique suas credenciais e tente novamente.');
+      } finally {
+        setIsLoading(false);
+      }
     } else {
       // Simulate authenticating for sandbox
       setTimeout(() => {
