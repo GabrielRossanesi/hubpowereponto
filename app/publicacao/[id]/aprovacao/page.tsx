@@ -201,6 +201,25 @@ function ApprovalContent() {
     );
   }
 
+  // Archived check
+  if (publication.archivedAt || publication.status === 'archived') {
+    return (
+      <div className="min-h-screen bg-background flex flex-col justify-center items-center px-4 text-center">
+        <Card className="max-w-md w-full shadow-2xl border-border/40 bg-card">
+          <CardContent className="p-8 text-center space-y-4">
+            <div className="h-16 w-16 rounded-full bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mx-auto">
+              <ShieldAlert className="h-8 w-8 text-amber-500" />
+            </div>
+            <h1 className="text-xl font-bold text-foreground">Publicação Indisponível</h1>
+            <p className="text-muted-foreground mt-2 text-sm leading-relaxed">
+              Esta publicação não está mais disponível para aprovação.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   // Action Handlers
   const handleApprove = async () => {
     try {
@@ -337,6 +356,9 @@ function ApprovalContent() {
       ? [publication.imageUrl]
       : [];
   const isCarousel = publication.postType === 'carousel' || images.length > 1;
+  const channels = publication.channels?.length
+    ? publication.channels
+    : (publication.platform ? [publication.platform] : ['instagram']);
 
   return (
     <div className="min-h-screen bg-background text-foreground py-8 px-4 sm:px-6 lg:px-8 flex flex-col justify-between">
@@ -375,9 +397,13 @@ function ApprovalContent() {
                     <span className="text-[10px] text-muted-foreground block mt-0.5">Agendado</span>
                   </div>
                 </div>
-                <div className="flex items-center gap-1.5 bg-background border border-border/40 px-2 py-0.5 rounded-full text-[10px] font-semibold text-foreground uppercase">
-                  <PlatformIcon platform={publication.platform} />
-                  <span>{publication.platform || 'Rede Social'}</span>
+                <div className="flex flex-wrap items-center gap-1.5 justify-end max-w-[50%]">
+                  {channels.map((chan) => (
+                    <div key={chan} className="flex items-center gap-1 bg-background border border-border/40 px-2 py-0.5 rounded-full text-[10px] font-semibold text-foreground uppercase shrink-0">
+                      <PlatformIcon platform={chan} />
+                      <span>{chan === 'google_business' ? 'Google' : chan}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
               

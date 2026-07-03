@@ -279,6 +279,9 @@ model Publication {
   imageFileName   String?
   imageSize       Int?
   imageMimeType   String?
+  archivedAt      DateTime?
+  archivedBy      String?
+  channels        Json?
 
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt

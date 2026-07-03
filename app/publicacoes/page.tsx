@@ -30,7 +30,7 @@ import EmptyState from '../../components/ui/empty-state';
 import DatePicker from '../../components/ui/date-picker';
 import { isDatabaseDataMode } from '../../lib/data-mode';
 import { getClients, getTenantMembers } from '../clientes/actions';
-import { getRealPublications, createRealPublication } from './actions';
+import { getRealPublications, createRealPublication, archivePublication, restorePublication, updatePublicationAction } from './actions';
 import type { Client, Publication } from '../../types';
 import { useCallback } from 'react';
 
@@ -141,7 +141,8 @@ export default function PublicacoesPage() {
     addPublication, 
     teamMembers,
     createPublicationApprovalLink,
-    regeneratePublicationApprovalLink
+    regeneratePublicationApprovalLink,
+    updatePublication: updateStorePublication
   } = useTenantStore();
 
   // Database States
@@ -149,6 +150,8 @@ export default function PublicacoesPage() {
   const [dbMembers, setDbMembers] = useState<{ id: string; name: string }[]>([]);
   const [dbPublications, setDbPublications] = useState<Publication[]>([]);
   const [brokenImages, setBrokenImages] = useState<Record<string, boolean>>({});
+  const [selectedChannels, setSelectedChannels] = useState<string[]>(['instagram']);
+  const [editingPubId, setEditingPubId] = useState<string | null>(null);
 
   const loadDbData = useCallback(async () => {
     if (!isDatabaseMode) return;
@@ -194,7 +197,6 @@ export default function PublicacoesPage() {
   const [caption, setCaption] = useState('');
   const [scheduledDate, setScheduledDate] = useState('');
   const [responsavel, setResponsavel] = useState('João Santos');
-  const [platform, setPlatform] = useState<'instagram' | 'facebook' | 'linkedin' | 'tiktok' | 'google_business' | 'other'>('instagram');
 
   // Update responsavel default once dbMembers load
   useEffect(() => {
@@ -230,7 +232,14 @@ export default function PublicacoesPage() {
       pub.clientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       pub.caption.toLowerCase().includes(searchTerm.toLowerCase());
       
-    const matchesStatus = statusFilter === 'all' || pub.status === statusFilter;
+    let matchesStatus = false;
+    if (statusFilter === 'all') {
+      matchesStatus = pub.status !== 'archived' && !pub.archivedAt;
+    } else if (statusFilter === 'archived') {
+      matchesStatus = pub.status === 'archived' || !!pub.archivedAt;
+    } else {
+      matchesStatus = pub.status === statusFilter && !pub.archivedAt;
+    }
     
     return matchesSearch && matchesStatus;
   });
@@ -322,51 +331,102 @@ export default function PublicacoesPage() {
       finalImages = validImages;
     }
 
-    if (isDatabaseMode) {
-      const response = await createRealPublication({
-        clientId: client.id,
-        clientName: client.name,
-        companyName: client.companyName,
-        imageUrl: finalImageUrl,
-        images: finalImages,
-        postType: postType,
-        caption: caption,
-        scheduledDate: scheduledDate,
-        responsibleUser: responsavel,
-        platform: platform,
-        imageSource: imageSource,
-        imageFileName: postType === 'single_image' && imageSource === 'upload' ? imageFileName : undefined,
-        imageSize: postType === 'single_image' && imageSource === 'upload' ? imageSize : undefined,
-        imageMimeType: postType === 'single_image' && imageSource === 'upload' ? imageMimeType : undefined,
-      });
+    if (editingPubId) {
+      if (isDatabaseMode) {
+        const response = await updatePublicationAction(editingPubId, {
+          clientId: client.id,
+          clientName: client.name,
+          companyName: client.companyName,
+          imageUrl: finalImageUrl,
+          images: finalImages,
+          postType: postType,
+          caption: caption,
+          scheduledDate: scheduledDate,
+          responsibleUser: responsavel,
+          platform: selectedChannels[0] || 'instagram',
+          channels: selectedChannels,
+          imageSource: imageSource,
+          imageFileName: postType === 'single_image' && imageSource === 'upload' ? imageFileName : undefined,
+          imageSize: postType === 'single_image' && imageSource === 'upload' ? imageSize : undefined,
+          imageMimeType: postType === 'single_image' && imageSource === 'upload' ? imageMimeType : undefined,
+        });
 
-      if (response.success && response.data) {
-        setDbPublications(prev => [response.data!, ...prev]);
-        alert('Publicação criada com sucesso!');
+        if (response.success && response.data) {
+          setDbPublications(prev => prev.map(p => p.id === editingPubId ? response.data! : p));
+          alert('Publicação atualizada com sucesso!');
+        } else {
+          alert('Erro ao atualizar publicação: ' + (response.error || 'Erro desconhecido.'));
+          return;
+        }
       } else {
-        alert('Erro ao criar publicação: ' + (response.error || 'Erro desconhecido.'));
-        return;
+        updateStorePublication(editingPubId, {
+          clientId: client.id,
+          clientName: client.name,
+          companyName: client.companyName,
+          imageUrl: finalImageUrl,
+          images: finalImages,
+          postType: postType as 'single_image' | 'carousel',
+          caption: caption,
+          scheduledDate: scheduledDate,
+          responsibleUser: responsavel,
+          platform: (selectedChannels[0] || 'instagram') as 'instagram' | 'facebook' | 'linkedin' | 'tiktok' | 'google_business' | 'other',
+          channels: selectedChannels,
+          imageSource: imageSource as 'upload' | 'external_url',
+          imageFileName: postType === 'single_image' && imageSource === 'upload' ? imageFileName : undefined,
+          imageSize: postType === 'single_image' && imageSource === 'upload' ? imageSize : undefined,
+          imageMimeType: postType === 'single_image' && imageSource === 'upload' ? imageMimeType : undefined,
+        });
+        alert('Publicação atualizada com sucesso!');
       }
     } else {
-      addPublication({
-        clientId: client.id,
-        clientName: client.name,
-        companyName: client.companyName,
-        imageUrl: finalImageUrl,
-        images: finalImages,
-        postType: postType,
-        caption: caption,
-        scheduledDate: scheduledDate,
-        status: 'pending_approval',
-        approvalLink: '', // Generated via action afterwards
-        responsibleUser: responsavel,
-        platform: platform,
-        imageSource: imageSource,
-        imageFileName: postType === 'single_image' && imageSource === 'upload' ? imageFileName : undefined,
-        imageSize: postType === 'single_image' && imageSource === 'upload' ? imageSize : undefined,
-        imageMimeType: postType === 'single_image' && imageSource === 'upload' ? imageMimeType : undefined,
-      });
-      alert('Publicação criada com sucesso!');
+      if (isDatabaseMode) {
+        const response = await createRealPublication({
+          clientId: client.id,
+          clientName: client.name,
+          companyName: client.companyName,
+          imageUrl: finalImageUrl,
+          images: finalImages,
+          postType: postType,
+          caption: caption,
+          scheduledDate: scheduledDate,
+          responsibleUser: responsavel,
+          platform: selectedChannels[0] || 'instagram',
+          channels: selectedChannels,
+          imageSource: imageSource,
+          imageFileName: postType === 'single_image' && imageSource === 'upload' ? imageFileName : undefined,
+          imageSize: postType === 'single_image' && imageSource === 'upload' ? imageSize : undefined,
+          imageMimeType: postType === 'single_image' && imageSource === 'upload' ? imageMimeType : undefined,
+        });
+
+        if (response.success && response.data) {
+          setDbPublications(prev => [response.data!, ...prev]);
+          alert('Publicação criada com sucesso!');
+        } else {
+          alert('Erro ao criar publicação: ' + (response.error || 'Erro desconhecido.'));
+          return;
+        }
+      } else {
+        addPublication({
+          clientId: client.id,
+          clientName: client.name,
+          companyName: client.companyName,
+          imageUrl: finalImageUrl,
+          images: finalImages,
+          postType: postType as 'single_image' | 'carousel',
+          caption: caption,
+          scheduledDate: scheduledDate,
+          status: 'pending_approval',
+          approvalLink: '', // Generated via action afterwards
+          responsibleUser: responsavel,
+          platform: (selectedChannels[0] || 'instagram') as 'instagram' | 'facebook' | 'linkedin' | 'tiktok' | 'google_business' | 'other',
+          channels: selectedChannels,
+          imageSource: imageSource as 'upload' | 'external_url',
+          imageFileName: postType === 'single_image' && imageSource === 'upload' ? imageFileName : undefined,
+          imageSize: postType === 'single_image' && imageSource === 'upload' ? imageSize : undefined,
+          imageMimeType: postType === 'single_image' && imageSource === 'upload' ? imageMimeType : undefined,
+        });
+        alert('Publicação criada com sucesso!');
+      }
     }
 
     setSelectedClientId('');
@@ -381,7 +441,8 @@ export default function PublicacoesPage() {
     setCaption('');
     setScheduledDate('');
     setResponsavel(isDatabaseMode ? (dbMembers[0]?.name || '') : 'João Santos');
-    setPlatform('instagram');
+    setSelectedChannels(['instagram']);
+    setEditingPubId(null);
     setFileError(null);
     setIsModalOpen(false);
   };
@@ -403,6 +464,71 @@ export default function PublicacoesPage() {
     }
   };
 
+  const handleStartEditPublication = (pub: Publication) => {
+    setEditingPubId(pub.id);
+    setSelectedClientId(pub.clientId);
+    setPostType(pub.postType || 'single_image');
+    setCaption(pub.caption);
+    setScheduledDate(pub.scheduledDate);
+    setResponsavel(pub.responsibleUser);
+    setSelectedChannels(pub.channels || (pub.platform ? [pub.platform] : ['instagram']));
+    
+    if (pub.postType === 'carousel') {
+      setCarouselImages(pub.images || ['', '']);
+    } else {
+      setImageSource(pub.imageSource === 'upload' ? 'upload' : 'external_url');
+      setImageUrl(pub.imageUrl || '');
+      if (pub.imageSource === 'upload') {
+        setImageFileBase64(pub.imageUrl || '');
+        setImageFileName(pub.imageFileName || '');
+        setImageSize(pub.imageSize || 0);
+        setImageMimeType(pub.imageMimeType || '');
+      }
+    }
+    setFileError(null);
+    setIsModalOpen(true);
+  };
+
+  const handleArchivePublication = async (id: string) => {
+    if (!confirm('Tem certeza que deseja arquivar esta publicação?')) return;
+
+    if (isDatabaseMode) {
+      const res = await archivePublication(id);
+      if (res.success) {
+        setDbPublications(prev => prev.map(p => p.id === id ? { ...p, status: 'archived', archivedAt: new Date().toISOString() } : p));
+        alert('Publicação arquivada com sucesso!');
+      } else {
+        alert('Erro ao arquivar: ' + (res.error || 'Erro desconhecido.'));
+      }
+    } else {
+      updateStorePublication(id, {
+        status: 'archived',
+        archivedAt: new Date().toISOString(),
+        archivedBy: 'system_operator'
+      });
+      alert('Publicação arquivada com sucesso!');
+    }
+  };
+
+  const handleRestorePublication = async (id: string) => {
+    if (isDatabaseMode) {
+      const res = await restorePublication(id);
+      if (res.success) {
+        setDbPublications(prev => prev.map(p => p.id === id ? { ...p, status: 'pending_approval', archivedAt: undefined, archivedBy: undefined } : p));
+        alert('Publicação restaurada com sucesso!');
+      } else {
+        alert('Erro ao restaurar: ' + (res.error || 'Erro desconhecido.'));
+      }
+    } else {
+      updateStorePublication(id, {
+        status: 'pending_approval',
+        archivedAt: undefined,
+        archivedBy: undefined
+      });
+      alert('Publicação restaurada com sucesso!');
+    }
+  };
+
   const clientOptions = isDatabaseMode
     ? (dbClients.length > 0
         ? dbClients.map(c => ({ value: c.id, label: c.companyName }))
@@ -414,14 +540,15 @@ export default function PublicacoesPage() {
         ? dbMembers.map(m => ({ value: m.name, label: m.name }))
         : [{ value: '', label: 'Nenhum usuário encontrado nesta empresa' }])
     : teamMembers.map(m => ({ value: m.name, label: m.name }));
-  
-  const platformOptions = [
+
+  const channelOptions = [
     { value: 'instagram', label: 'Instagram' },
     { value: 'facebook', label: 'Facebook' },
     { value: 'linkedin', label: 'LinkedIn' },
     { value: 'tiktok', label: 'TikTok' },
-    { value: 'google_business', label: 'Google Business' },
-    { value: 'other', label: 'Outro' }
+    { value: 'google_business', label: 'Google Meu Negócio' },
+    { value: 'youtube_shorts', label: 'YouTube Shorts' },
+    { value: 'x', label: 'X / Twitter' }
   ];
 
   const finalPreviewImageUrl = postType === 'carousel' ? (carouselImages[0] || '') : (imageSource === 'upload' ? imageFileBase64 : imageUrl);
@@ -457,7 +584,7 @@ export default function PublicacoesPage() {
         <div className="flex items-center gap-3 w-full md:w-auto">
           <Filter className="h-4 w-4 text-muted-foreground shrink-0" />
           <div className="flex gap-1.5 overflow-x-auto w-full md:w-auto">
-            {['all', 'pending_approval', 'approved', 'changes_requested'].map((statusKey) => (
+            {['all', 'pending_approval', 'approved', 'changes_requested', 'archived'].map((statusKey) => (
               <button
                 key={statusKey}
                 onClick={() => setStatusFilter(statusKey)}
@@ -471,6 +598,7 @@ export default function PublicacoesPage() {
                 {statusKey === 'pending_approval' && 'Aguardando Aprovação'}
                 {statusKey === 'approved' && 'Aprovadas'}
                 {statusKey === 'changes_requested' && 'Alteração Solicitada'}
+                {statusKey === 'archived' && 'Arquivadas'}
               </button>
             ))}
           </div>
@@ -534,10 +662,22 @@ export default function PublicacoesPage() {
                         Carrossel ({images.length} imagens)
                       </div>
                     )}
-                    <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5">
-                      <div className="h-6 w-6 rounded-full bg-slate-900/80 backdrop-blur-sm flex items-center justify-center shadow-sm">
-                        <PlatformIcon platform={pub.platform} />
-                      </div>
+                    <div className="absolute top-2.5 right-2.5 flex items-center gap-1">
+                      {pub.channels && pub.channels.slice(0, 3).map((chan) => (
+                        <div key={chan} className="h-6 w-6 rounded-full bg-slate-900/80 backdrop-blur-sm flex items-center justify-center shadow-sm text-white" title={chan}>
+                          <PlatformIcon platform={chan as 'instagram' | 'facebook' | 'linkedin' | 'tiktok' | 'google_business' | 'other'} />
+                        </div>
+                      ))}
+                      {pub.channels && pub.channels.length > 3 && (
+                        <div className="h-6 w-6 rounded-full bg-slate-900/80 backdrop-blur-sm flex items-center justify-center shadow-sm text-[8px] font-bold text-white" title={pub.channels.slice(3).join(', ')}>
+                          +{pub.channels.length - 3}
+                        </div>
+                      )}
+                      {(!pub.channels || pub.channels.length === 0) && pub.platform && (
+                        <div className="h-6 w-6 rounded-full bg-slate-900/80 backdrop-blur-sm flex items-center justify-center shadow-sm text-white">
+                          <PlatformIcon platform={pub.platform} />
+                        </div>
+                      )}
                       <StatusBadge type="publication" status={pub.status} />
                     </div>
                   </div>
@@ -588,6 +728,39 @@ export default function PublicacoesPage() {
                       </div>
                     )}
                   </div>
+                </div>
+
+                {/* Edit / Archive / Restore action bar */}
+                <div className="px-4 py-2 bg-muted/20 border-t border-border/20 flex gap-2 justify-end">
+                  {pub.status === 'archived' || pub.archivedAt ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs gap-1 hover:border-success hover:text-success py-1"
+                      onClick={() => handleRestorePublication(pub.id)}
+                    >
+                      <RefreshCw className="h-3 w-3" /> Restaurar
+                    </Button>
+                  ) : (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-xs gap-1 py-1"
+                        onClick={() => handleStartEditPublication(pub)}
+                      >
+                        Editar
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-xs gap-1 hover:border-danger hover:text-danger py-1"
+                        onClick={() => handleArchivePublication(pub.id)}
+                      >
+                        Arquivar
+                      </Button>
+                    </>
+                  )}
                 </div>
 
                 {/* Approval controls */}
@@ -693,12 +866,15 @@ export default function PublicacoesPage() {
       {/* Creation Modal */}
       <Modal
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        title="Cadastrar Nova Publicação"
-        description="Crie um novo post de teste para aprovação do cliente."
+        onClose={() => {
+          setIsModalOpen(false);
+          setEditingPubId(null);
+        }}
+        title={editingPubId ? "Editar Publicação" : "Cadastrar Nova Publicação"}
+        description={editingPubId ? "Atualize os dados da publicação." : "Crie um novo post de teste para aprovação do cliente."}
       >
         <form onSubmit={handleCreatePublication} className="space-y-4 pt-2">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-4">
             <Select
               label="Selecione o Cliente"
               placeholder="Escolha um cliente..."
@@ -707,12 +883,34 @@ export default function PublicacoesPage() {
               onChange={(e) => setSelectedClientId(e.target.value)}
               required
             />
-            <Select
-              label="Canal / Rede Social"
-              options={platformOptions}
-              value={platform}
-              onChange={(e) => setPlatform(e.target.value as 'instagram' | 'facebook' | 'linkedin' | 'tiktok' | 'google_business' | 'other')}
-            />
+            
+            {/* Multi-channel checkboxes */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block">Redes Sociais / Canais (Selecione pelo menos um)</label>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {channelOptions.map(option => (
+                  <label key={option.value} className="flex items-center gap-2 p-2 bg-muted/40 border border-border/40 rounded-lg text-xs font-semibold cursor-pointer select-none hover:bg-muted/60 transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={selectedChannels.includes(option.value)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedChannels(prev => [...prev, option.value]);
+                        } else {
+                          if (selectedChannels.length > 1) {
+                            setSelectedChannels(prev => prev.filter(c => c !== option.value));
+                          } else {
+                            alert('Selecione pelo menos uma rede social.');
+                          }
+                        }
+                      }}
+                      className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                    />
+                    <span>{option.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
           </div>
 
           {/* Post Type Selector */}
@@ -930,8 +1128,9 @@ export default function PublicacoesPage() {
                       : 'Nome do Cliente'}
                   </span>
                   <span className="text-[10px] text-muted-foreground uppercase font-bold flex items-center gap-1">
-                    <PlatformIcon platform={platform} />
-                    {platform}
+                    {selectedChannels.map(chan => (
+                      <PlatformIcon key={chan} platform={chan as 'instagram' | 'facebook' | 'linkedin' | 'tiktok' | 'google_business' | 'other'} />
+                    ))}
                   </span>
                 </div>
                 {finalPreviewImageUrl && (
@@ -994,11 +1193,18 @@ export default function PublicacoesPage() {
           )}
 
           <div className="flex justify-end gap-3 pt-4 border-t border-border/20">
-            <Button type="button" variant="outline" onClick={() => setIsModalOpen(false)}>
+            <Button 
+              type="button" 
+              variant="outline" 
+              onClick={() => {
+                setIsModalOpen(false);
+                setEditingPubId(null);
+              }}
+            >
               Cancelar
             </Button>
             <Button type="submit">
-              Criar Publicação
+              {editingPubId ? 'Salvar Alterações' : 'Criar Publicação'}
             </Button>
           </div>
         </form>

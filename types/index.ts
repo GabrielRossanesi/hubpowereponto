@@ -154,7 +154,8 @@ export type PublicationStatus =
   | 'adjusting'
   | 'resubmitted'
   | 'scheduled'
-  | 'posted';
+  | 'posted'
+  | 'archived';
 
 export interface Publication {
   id: string;
@@ -186,6 +187,9 @@ export interface Publication {
   platform?: 'instagram' | 'facebook' | 'linkedin' | 'tiktok' | 'google_business' | 'other';
   postType?: 'single_image' | 'carousel';
   images?: string[];
+  archivedAt?: string;
+  archivedBy?: string;
+  channels?: string[];
 }
 
 export type TaskStatus = 'pending' | 'in_progress' | 'in_review' | 'completed' | 'overdue' | 'cancelled' | 'archived';

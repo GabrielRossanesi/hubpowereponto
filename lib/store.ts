@@ -155,6 +155,9 @@ interface SystemState {
   regeneratePublicationApprovalLink: (publicationId: string) => string;
   approvePublicationByToken: (publicationId: string, token: string) => void;
   requestPublicationChangesByToken: (publicationId: string, token: string, feedback: string) => void;
+  archivePublication: (id: string) => void;
+  restorePublication: (id: string) => void;
+  updatePublication: (id: string, data: Partial<Publication>) => void;
 
   addTask: (task: Omit<TeamTask, 'id' | 'organizationId' | 'createdAt'> & { organizationId?: string }) => TeamTask | null;
   updateTaskStatus: (id: string, status: TaskStatus) => void;
@@ -3051,6 +3054,98 @@ export const useStore = create<SystemState>()(
               : p
           )
         }));
+      },
+
+      archivePublication: (id) => {
+        const pub = get().publications.find(p => p.id === id);
+        if (!pub) return;
+
+        set((state) => ({
+          publications: state.publications.map((p) =>
+            p.id === id
+              ? {
+                  ...p,
+                  status: 'archived',
+                  archivedAt: new Date().toISOString(),
+                  archivedBy: 'system_operator'
+                }
+              : p
+          )
+        }));
+
+        get().addHistoryEvent({
+          clientId: pub.clientId,
+          clientName: pub.clientName,
+          title: 'Publicação Arquivada',
+          description: `A publicação agendada para ${pub.scheduledDate} foi arquivada.`,
+          type: 'publication_revision',
+          organizationId: pub.organizationId
+        });
+      },
+
+      restorePublication: (id) => {
+        const pub = get().publications.find(p => p.id === id);
+        if (!pub) return;
+
+        set((state) => ({
+          publications: state.publications.map((p) =>
+            p.id === id
+              ? {
+                  ...p,
+                  status: 'pending_approval',
+                  archivedAt: undefined,
+                  archivedBy: undefined
+                }
+              : p
+          )
+        }));
+
+        get().addHistoryEvent({
+          clientId: pub.clientId,
+          clientName: pub.clientName,
+          title: 'Publicação Restaurada',
+          description: `A publicação foi restaurada e retornou para a fila de aprovação.`,
+          type: 'publication_sent',
+          organizationId: pub.organizationId
+        });
+      },
+
+      updatePublication: (id, data) => {
+        const pub = get().publications.find(p => p.id === id);
+        if (!pub) return;
+
+        set((state) => ({
+          publications: state.publications.map((p) => {
+            if (p.id === id) {
+              const updated = { ...p, ...data };
+              if (p.status === 'approved') {
+                updated.status = 'pending_approval';
+                updated.approvalLinkStatus = 'active';
+                updated.approvedAt = undefined;
+                updated.changesRequestedAt = undefined;
+                updated.clientComments = undefined;
+                updated.clientFeedback = undefined;
+              } else if (p.status === 'changes_requested') {
+                updated.status = 'pending_approval';
+                updated.approvalLinkStatus = 'active';
+                updated.clientComments = undefined;
+                updated.clientFeedback = undefined;
+                updated.changesRequestedAt = undefined;
+              }
+              return updated;
+            }
+            return p;
+          })
+        }));
+
+        get().addHistoryEvent({
+          clientId: pub.clientId,
+          clientName: pub.clientName,
+          title: 'Publicação Atualizada',
+          description: `Os detalhes da publicação agendada para ${pub.scheduledDate} foram atualizados.`,
+          type: 'publication_sent',
+          organizationId: pub.organizationId
+        });
       },
 
       addTask: (taskData) => {

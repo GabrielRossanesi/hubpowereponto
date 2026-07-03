@@ -25,6 +25,23 @@ function mapDbPubToPub(dbPub: PrismaPublication): Publication {
     imagesArr = [dbPub.imageUrl];
   }
 
+  let channelsArr: string[] = [];
+  if (dbPub.channels) {
+    try {
+      if (typeof dbPub.channels === 'string') {
+        channelsArr = JSON.parse(dbPub.channels);
+      } else if (Array.isArray(dbPub.channels)) {
+        channelsArr = dbPub.channels as string[];
+      }
+    } catch (e) {
+      console.error('Error parsing channels JSON:', e);
+    }
+  }
+  // Fallback to platform if channels is empty
+  if (channelsArr.length === 0 && dbPub.platform) {
+    channelsArr = [dbPub.platform];
+  }
+
   const approvalLink = `/publicacao/${dbPub.id}/aprovacao?token=${dbPub.approvalToken}`;
 
   // Consider it expired after 24h
@@ -41,7 +58,7 @@ function mapDbPubToPub(dbPub: PrismaPublication): Publication {
     postType: (dbPub.postType || 'single_image') as 'single_image' | 'carousel',
     caption: dbPub.caption || '',
     scheduledDate: dbPub.scheduledDate || '',
-    status: (dbPub.status || 'pending_approval') as 'pending_approval' | 'approved' | 'changes_requested',
+    status: (dbPub.status || 'pending_approval') as 'pending_approval' | 'approved' | 'changes_requested' | 'archived',
     approvalToken: dbPub.approvalToken,
     approvalLink,
     approvalLinkStatus: dbPub.status === 'approved' ? 'approved' : (dbPub.status === 'changes_requested' ? 'changes_requested' : 'active'),
@@ -54,6 +71,9 @@ function mapDbPubToPub(dbPub: PrismaPublication): Publication {
     imageSize: dbPub.imageSize || undefined,
     imageMimeType: dbPub.imageMimeType || undefined,
     createdAt: dbPub.createdAt.toISOString(),
+    archivedAt: dbPub.archivedAt ? dbPub.archivedAt.toISOString() : undefined,
+    archivedBy: dbPub.archivedBy || undefined,
+    channels: channelsArr,
   };
 }
 
@@ -91,6 +111,7 @@ export async function createRealPublication(data: {
   scheduledDate: string;
   responsibleUser: string;
   platform: string;
+  channels: string[];
   imageSource?: string;
   imageFileName?: string;
   imageSize?: number;
@@ -106,6 +127,9 @@ export async function createRealPublication(data: {
 
     const token = crypto.randomUUID();
 
+    const firstPlatform = data.platform || (data.channels && data.channels.length > 0 ? data.channels[0] : 'instagram');
+    const finalChannels = data.channels && data.channels.length > 0 ? data.channels : [firstPlatform];
+
     const dbPub = await prisma.publication.create({
       data: {
         organizationId: activeOrgId,
@@ -120,7 +144,8 @@ export async function createRealPublication(data: {
         status: 'pending_approval',
         approvalToken: token,
         responsibleUser: data.responsibleUser,
-        platform: data.platform,
+        platform: firstPlatform,
+        channels: finalChannels,
         imageSource: data.imageSource || 'external_url',
         imageFileName: data.imageFileName,
         imageSize: data.imageSize,
@@ -253,6 +278,218 @@ export async function requestPublicationChangesByTokenAction(token: string, feed
   } catch (err: unknown) {
     console.error('Error requesting changes:', err);
     const errMsg = err instanceof Error ? err.message : 'Erro ao registrar alterações.';
+    return { success: false, error: errMsg };
+  }
+}
+
+export async function archivePublication(publicationId: string): Promise<{ success: boolean; error?: string }> {
+  if (!isDatabaseDataMode) {
+    return { success: false, error: 'Database mode not active.' };
+  }
+
+  try {
+    const session = await getSession();
+    if (!session) {
+      return { success: false, error: 'Não autorizado: Sessão não encontrada.' };
+    }
+
+    const activeOrgId = await getActiveOrganizationId(session);
+    await validateTenantAccess(activeOrgId);
+
+    const dbPub = await prisma.publication.findUnique({
+      where: { id: publicationId }
+    });
+
+    if (!dbPub) {
+      return { success: false, error: 'Publicação não encontrada.' };
+    }
+
+    if (dbPub.organizationId !== activeOrgId) {
+      return { success: false, error: 'Não autorizado: Publicação pertence a outro inquilino.' };
+    }
+
+    await prisma.publication.update({
+      where: { id: publicationId },
+      data: {
+        status: 'archived',
+        archivedAt: new Date(),
+        archivedBy: session.user.id
+      }
+    });
+
+    // Write audit log
+    await prisma.auditLog.create({
+      data: {
+        organizationId: activeOrgId,
+        action: `PUBLICATION_ARCHIVED: ${dbPub.companyName}`,
+        userId: session.user.id,
+        target: dbPub.id
+      }
+    });
+
+    return { success: true };
+  } catch (err: unknown) {
+    console.error('Error archiving publication:', err);
+    const errMsg = err instanceof Error ? err.message : 'Erro ao arquivar publicação.';
+    return { success: false, error: errMsg };
+  }
+}
+
+export async function restorePublication(publicationId: string): Promise<{ success: boolean; error?: string }> {
+  if (!isDatabaseDataMode) {
+    return { success: false, error: 'Database mode not active.' };
+  }
+
+  try {
+    const session = await getSession();
+    if (!session) {
+      return { success: false, error: 'Não autorizado: Sessão não encontrada.' };
+    }
+
+    const activeOrgId = await getActiveOrganizationId(session);
+    await validateTenantAccess(activeOrgId);
+
+    const dbPub = await prisma.publication.findUnique({
+      where: { id: publicationId }
+    });
+
+    if (!dbPub) {
+      return { success: false, error: 'Publicação não encontrada.' };
+    }
+
+    if (dbPub.organizationId !== activeOrgId) {
+      return { success: false, error: 'Não autorizado: Publicação pertence a outro inquilino.' };
+    }
+
+    await prisma.publication.update({
+      where: { id: publicationId },
+      data: {
+        status: 'pending_approval',
+        archivedAt: null,
+        archivedBy: null
+      }
+    });
+
+    // Write audit log
+    await prisma.auditLog.create({
+      data: {
+        organizationId: activeOrgId,
+        action: `PUBLICATION_RESTORED: ${dbPub.companyName}`,
+        userId: session.user.id,
+        target: dbPub.id
+      }
+    });
+
+    return { success: true };
+  } catch (err: unknown) {
+    console.error('Error restoring publication:', err);
+    const errMsg = err instanceof Error ? err.message : 'Erro ao restaurar publicação.';
+    return { success: false, error: errMsg };
+  }
+}
+
+export async function updatePublicationAction(
+  publicationId: string,
+  data: {
+    clientId: string;
+    clientName: string;
+    companyName: string;
+    imageUrl: string;
+    images: string[];
+    postType: string;
+    caption: string;
+    scheduledDate: string;
+    responsibleUser: string;
+    platform: string;
+    channels: string[];
+    imageSource?: string;
+    imageFileName?: string;
+    imageSize?: number;
+    imageMimeType?: string;
+  }
+): Promise<{ success: boolean; data?: Publication; error?: string }> {
+  if (!isDatabaseDataMode) {
+    return { success: false, error: 'Database mode not active.' };
+  }
+
+  try {
+    const session = await getSession();
+    if (!session) {
+      return { success: false, error: 'Não autorizado: Sessão não encontrada.' };
+    }
+
+    const activeOrgId = await getActiveOrganizationId(session);
+    await validateTenantAccess(activeOrgId);
+
+    const dbPub = await prisma.publication.findUnique({
+      where: { id: publicationId }
+    });
+
+    if (!dbPub) {
+      return { success: false, error: 'Publicação não encontrada.' };
+    }
+
+    if (dbPub.organizationId !== activeOrgId) {
+      return { success: false, error: 'Não autorizado: Publicação pertence a outro inquilino.' };
+    }
+
+    // Validate that the clientId (if changed) belongs to the organization
+    const client = await prisma.client.findFirst({
+      where: { id: data.clientId, organizationId: activeOrgId }
+    });
+    if (!client) {
+      return { success: false, error: 'Não autorizado: Cliente não pertence a este inquilino.' };
+    }
+
+    const firstPlatform = data.platform || (data.channels && data.channels.length > 0 ? data.channels[0] : 'instagram');
+    const finalChannels = data.channels && data.channels.length > 0 ? data.channels : [firstPlatform];
+
+    // Determine status reset behavior
+    let statusUpdate = dbPub.status;
+    let commentsUpdate = dbPub.clientComments;
+
+    if (dbPub.status === 'approved' || dbPub.status === 'changes_requested') {
+      statusUpdate = 'pending_approval';
+      commentsUpdate = null;
+    }
+
+    const updatedDbPub = await prisma.publication.update({
+      where: { id: publicationId },
+      data: {
+        clientId: data.clientId,
+        clientName: data.clientName,
+        companyName: data.companyName,
+        imageUrl: data.imageUrl,
+        images: data.images,
+        postType: data.postType,
+        caption: data.caption,
+        scheduledDate: data.scheduledDate,
+        responsibleUser: data.responsibleUser,
+        platform: firstPlatform,
+        channels: finalChannels,
+        status: statusUpdate,
+        clientComments: commentsUpdate,
+        imageSource: data.imageSource || 'external_url',
+        imageFileName: data.imageFileName,
+        imageSize: data.imageSize,
+        imageMimeType: data.imageMimeType,
+      }
+    });
+
+    // Write audit log
+    await prisma.auditLog.create({
+      data: {
+        organizationId: activeOrgId,
+        action: `PUBLICATION_UPDATED: ${data.companyName}`,
+        userId: session.user.id,
+        target: updatedDbPub.id
+      }
+    });
+
+    return { success: true, data: mapDbPubToPub(updatedDbPub) };
+  } catch (err: unknown) {
+    console.error('Error updating publication:', err);
+    const errMsg = err instanceof Error ? err.message : 'Erro ao atualizar publicação.';
     return { success: false, error: errMsg };
   }
 }

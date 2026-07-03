@@ -107,7 +107,8 @@ export function StatusBadge({ type, status }: StatusBadgeProps) {
       adjusting: { label: 'Em Ajuste', variant: 'warning' },
       resubmitted: { label: 'Reenviado para Aprovação', variant: 'info' },
       scheduled: { label: 'Agendado', variant: 'success' },
-      posted: { label: 'Postado', variant: 'success' }
+      posted: { label: 'Postado', variant: 'success' },
+      archived: { label: 'Arquivado', variant: 'muted' }
     };
     if (mapping[s]) {
       label = mapping[s].label;
