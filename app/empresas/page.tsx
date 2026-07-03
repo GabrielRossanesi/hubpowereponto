@@ -14,7 +14,8 @@ import {
   createOrganizationUser,
   updateOrganizationUserRole,
   resetOrganizationUserPassword,
-  removeOrganizationMember
+  removeOrganizationMember,
+  setOperatorActiveOrganization
 } from './actions';
 import { useSession } from '../../lib/auth-client';
 import {
@@ -290,9 +291,17 @@ export default function EmpresasAdminPage() {
     );
   };
 
-  const handleSimulateAccess = (orgId: string) => {
-    setCurrentOrganizationId(orgId);
-    router.push('/dashboard');
+  const handleSimulateAccess = async (orgId: string) => {
+    try {
+      if (isDatabaseMode) {
+        await setOperatorActiveOrganization(orgId);
+      }
+      setCurrentOrganizationId(orgId);
+      router.push('/dashboard');
+      router.refresh();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Erro ao simular acesso.');
+    }
   };
 
   const showModalFeedback = (msg: string) => {

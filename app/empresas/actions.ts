@@ -746,3 +746,28 @@ export async function removeOrganizationMember(memberId: string) {
     throw new Error(message);
   }
 }
+
+/**
+ * Sets the activeOrganizationId in the operator session record.
+ */
+export async function setOperatorActiveOrganization(organizationId: string) {
+  await requireOperator();
+  const session = await getSession();
+
+  if (!session) {
+    throw new Error('Sessão não encontrada.');
+  }
+
+  try {
+    await prisma.session.update({
+      where: { id: session.session.id },
+      data: { activeOrganizationId: organizationId }
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error('Error in setOperatorActiveOrganization:', error);
+    const message = error instanceof Error ? error.message : 'Erro ao alternar organização ativa do operador.';
+    throw new Error(message);
+  }
+}

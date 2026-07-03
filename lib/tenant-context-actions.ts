@@ -79,7 +79,51 @@ export async function getCurrentDatabaseTenantContext(): Promise<DatabaseTenantC
     }),
   ]);
 
-  if (!membership) return null;
+  if (!membership) {
+    const isPlatformOperator = user?.platformRole === 'operator' || user?.platformRole === 'platform_admin';
+    if (isPlatformOperator && preferredOrganizationId) {
+      const org = await prisma.organization.findUnique({
+        where: { id: preferredOrganizationId },
+        include: { features: true },
+      });
+
+      if (org) {
+        const planId = (org.planId || 'starter') as PlanType;
+        const defaultFeatures = getDefaultFeatures(planId);
+
+        return {
+          organization: {
+            id: org.id,
+            name: org.name,
+            cnpj: '',
+            planId,
+            status: org.isActive ? 'active' : 'suspended',
+            logoUrl: org.logo || undefined,
+            createdAt: org.createdAt.toISOString(),
+          },
+          features: {
+            organizationId: org.id,
+            leads: org.features?.leads ?? defaultFeatures.leads,
+            clients: org.features?.clients ?? defaultFeatures.clients,
+            proposals: org.features?.proposals ?? defaultFeatures.proposals,
+            contracts: org.features?.contracts ?? defaultFeatures.contracts,
+            charges: org.features?.charges ?? defaultFeatures.charges,
+            onboarding: org.features?.onboarding ?? defaultFeatures.onboarding,
+            publications: org.features?.publications ?? defaultFeatures.publications,
+            tasks: org.features?.tasks ?? defaultFeatures.tasks,
+            history: org.features?.history ?? defaultFeatures.history,
+            integrations: defaultFeatures.integrations,
+            team: org.features?.team ?? defaultFeatures.team,
+            publicProposal: defaultFeatures.publicProposal,
+            financial: org.features?.financial ?? defaultFeatures.financial,
+          },
+          membershipRole: 'owner',
+          platformRole: user?.platformRole,
+        };
+      }
+    }
+    return null;
+  }
 
   const org = membership.organization;
   const planId = (org.planId || 'starter') as PlanType;

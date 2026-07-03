@@ -81,81 +81,89 @@ export async function createClient(data: {
   responsibleUser?: string;
   commercialStatus: ClientStatus;
   notes?: string;
-}): Promise<Client> {
+}): Promise<{ success: boolean; data?: Client; error?: string }> {
   if (!isDatabaseDataMode) {
-    throw new Error('Operação disponível apenas no modo database.');
+    return { success: false, error: 'Operação disponível apenas no modo database.' };
   }
 
-  const session = await getSession();
-  if (!session || !session.session.activeOrganizationId) {
-    throw new Error('Não autorizado: Organização ativa não selecionada.');
-  }
+  try {
+    const session = await getSession();
+    if (!session || !session.session.activeOrganizationId) {
+      return { success: false, error: 'Não autorizado: Organização ativa não selecionada.' };
+    }
 
-  const activeOrgId = session.session.activeOrganizationId;
-  const executorId = session.user.id;
-  await validateTenantAccess(activeOrgId);
-  await checkClientsFeature(activeOrgId);
+    const activeOrgId = session.session.activeOrganizationId;
+    const executorId = session.user.id;
+    await validateTenantAccess(activeOrgId);
+    await checkClientsFeature(activeOrgId);
 
-  // Validate plan limits
-  const org = await prisma.organization.findUnique({
-    where: { id: activeOrgId },
-    select: { planId: true }
-  });
-  
-  if (org) {
-    const limits = {
-      starter: 3,
-      pro: 30,
-      enterprise: 99999
-    };
-    const maxClients = limits[org.planId as 'starter' | 'pro' | 'enterprise'] || 3;
+    // Validate plan limits
+    const org = await prisma.organization.findUnique({
+      where: { id: activeOrgId },
+      select: { planId: true }
+    });
     
-    const currentClientsCount = await prisma.client.count({
-      where: {
-        organizationId: activeOrgId,
-        status: { not: 'archived' }
+    if (org) {
+      const limits = {
+        starter: 3,
+        pro: 30,
+        enterprise: 99999
+      };
+      const maxClients = limits[org.planId as 'starter' | 'pro' | 'enterprise'] || 3;
+      
+      const currentClientsCount = await prisma.client.count({
+        where: {
+          organizationId: activeOrgId,
+          status: { not: 'archived' }
+        }
+      });
+
+      if (currentClientsCount >= maxClients) {
+        return { success: false, error: `Limite do Plano Atingido (${maxClients} clientes). Faça o upgrade do seu plano.` };
       }
+    }
+
+    // Validate required fields
+    if (!data.companyName.trim()) {
+      return { success: false, error: 'Nome da empresa / Razão social é obrigatório.' };
+    }
+    if (data.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) {
+      return { success: false, error: 'Formato de e-mail inválido.' };
+    }
+
+    const dbClient = await prisma.client.create({
+      data: {
+        organizationId: activeOrgId,
+        companyName: data.companyName,
+        contactName: data.name,
+        document: data.cnpj || null,
+        documentType: data.cnpj ? (data.cnpj.replace(/\D/g, '').length === 11 ? 'cpf' : 'cnpj') : null,
+        phone: data.phone || null,
+        email: data.email || null,
+        status: data.commercialStatus,
+        notes: data.notes || null,
+        responsibleUser: data.responsibleUser || 'Ana Silva',
+      },
     });
 
-    if (currentClientsCount >= maxClients) {
-      throw new Error(`Limite do Plano Atingido (${maxClients} clientes). Faça o upgrade do seu plano.`);
-    }
+    // Create Audit Log
+    await prisma.auditLog.create({
+      data: {
+        action: 'CLIENT_CREATED',
+        target: dbClient.id,
+        organizationId: activeOrgId,
+        userId: executorId,
+      },
+    });
+
+    return { success: true, data: mapDbClientToClient(dbClient) };
+  } catch (error) {
+    console.error('Error in createClient server action:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Não foi possível cadastrar o cliente. Verifique os dados e tente novamente.'
+    };
   }
-
-  // Validate required fields
-  if (!data.companyName.trim()) {
-    throw new Error('Nome da empresa / Razão social é obrigatório.');
-  }
-  if (data.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) {
-    throw new Error('Formato de e-mail inválido.');
-  }
-
-  const dbClient = await prisma.client.create({
-    data: {
-      organizationId: activeOrgId,
-      companyName: data.companyName,
-      contactName: data.name,
-      document: data.cnpj || null,
-      documentType: data.cnpj ? (data.cnpj.replace(/\D/g, '').length === 11 ? 'cpf' : 'cnpj') : null,
-      phone: data.phone || null,
-      email: data.email || null,
-      status: data.commercialStatus,
-      notes: data.notes || null,
-      responsibleUser: data.responsibleUser || 'Ana Silva',
-    },
-  });
-
-  // Create Audit Log
-  await prisma.auditLog.create({
-    data: {
-      action: 'CLIENT_CREATED',
-      target: dbClient.id,
-      organizationId: activeOrgId,
-      userId: executorId,
-    },
-  });
-
-  return mapDbClientToClient(dbClient);
 }
 
 export async function updateClient(
@@ -170,145 +178,169 @@ export async function updateClient(
     commercialStatus: ClientStatus;
     notes?: string;
   }
-): Promise<Client> {
+): Promise<{ success: boolean; data?: Client; error?: string }> {
   if (!isDatabaseDataMode) {
-    throw new Error('Operação disponível apenas no modo database.');
+    return { success: false, error: 'Operação disponível apenas no modo database.' };
   }
 
-  const session = await getSession();
-  if (!session || !session.session.activeOrganizationId) {
-    throw new Error('Não autorizado: Organização ativa não selecionada.');
+  try {
+    const session = await getSession();
+    if (!session || !session.session.activeOrganizationId) {
+      return { success: false, error: 'Não autorizado: Organização ativa não selecionada.' };
+    }
+
+    const activeOrgId = session.session.activeOrganizationId;
+    const executorId = session.user.id;
+    await validateTenantAccess(activeOrgId);
+    await checkClientsFeature(activeOrgId);
+
+    // Validate required fields
+    if (!data.companyName.trim()) {
+      return { success: false, error: 'Nome da empresa / Razão social é obrigatório.' };
+    }
+    if (data.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) {
+      return { success: false, error: 'Formato de e-mail inválido.' };
+    }
+
+    // Update client with multi-tenant check
+    const existingClient = await prisma.client.findFirst({
+      where: { id, organizationId: activeOrgId }
+    });
+    if (!existingClient) {
+      return { success: false, error: 'Cliente não encontrado ou acesso negado.' };
+    }
+
+    const dbClient = await prisma.client.update({
+      where: { id },
+      data: {
+        companyName: data.companyName,
+        contactName: data.name,
+        document: data.cnpj || null,
+        documentType: data.cnpj ? (data.cnpj.replace(/\D/g, '').length === 11 ? 'cpf' : 'cnpj') : null,
+        phone: data.phone || null,
+        email: data.email || null,
+        status: data.commercialStatus,
+        notes: data.notes || null,
+        responsibleUser: data.responsibleUser || 'Ana Silva',
+      },
+    });
+
+    // Create Audit Log
+    await prisma.auditLog.create({
+      data: {
+        action: 'CLIENT_UPDATED',
+        target: dbClient.id,
+        organizationId: activeOrgId,
+        userId: executorId,
+      },
+    });
+
+    return { success: true, data: mapDbClientToClient(dbClient) };
+  } catch (error) {
+    console.error('Error in updateClient server action:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Não foi possível atualizar o cliente. Tente novamente.'
+    };
   }
-
-  const activeOrgId = session.session.activeOrganizationId;
-  const executorId = session.user.id;
-  await validateTenantAccess(activeOrgId);
-  await checkClientsFeature(activeOrgId);
-
-  // Validate required fields
-  if (!data.companyName.trim()) {
-    throw new Error('Nome da empresa / Razão social é obrigatório.');
-  }
-  if (data.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email)) {
-    throw new Error('Formato de e-mail inválido.');
-  }
-
-  // Update client with multi-tenant check
-  const existingClient = await prisma.client.findFirst({
-    where: { id, organizationId: activeOrgId }
-  });
-  if (!existingClient) {
-    throw new Error('Cliente não encontrado ou acesso negado.');
-  }
-
-  const dbClient = await prisma.client.update({
-    where: { id },
-    data: {
-      companyName: data.companyName,
-      contactName: data.name,
-      document: data.cnpj || null,
-      documentType: data.cnpj ? (data.cnpj.replace(/\D/g, '').length === 11 ? 'cpf' : 'cnpj') : null,
-      phone: data.phone || null,
-      email: data.email || null,
-      status: data.commercialStatus,
-      notes: data.notes || null,
-      responsibleUser: data.responsibleUser || 'Ana Silva',
-    },
-  });
-
-  // Create Audit Log
-  await prisma.auditLog.create({
-    data: {
-      action: 'CLIENT_UPDATED',
-      target: dbClient.id,
-      organizationId: activeOrgId,
-      userId: executorId,
-    },
-  });
-
-  return mapDbClientToClient(dbClient);
 }
 
-export async function archiveClient(id: string): Promise<Client> {
+export async function archiveClient(id: string): Promise<{ success: boolean; data?: Client; error?: string }> {
   if (!isDatabaseDataMode) {
-    throw new Error('Operação disponível apenas no modo database.');
+    return { success: false, error: 'Operação disponível apenas no modo database.' };
   }
 
-  const session = await getSession();
-  if (!session || !session.session.activeOrganizationId) {
-    throw new Error('Não autorizado: Organização ativa não selecionada.');
+  try {
+    const session = await getSession();
+    if (!session || !session.session.activeOrganizationId) {
+      return { success: false, error: 'Não autorizado: Organização ativa não selecionada.' };
+    }
+
+    const activeOrgId = session.session.activeOrganizationId;
+    const executorId = session.user.id;
+    await validateTenantAccess(activeOrgId);
+
+    const existingClient = await prisma.client.findFirst({
+      where: { id, organizationId: activeOrgId }
+    });
+    if (!existingClient) {
+      return { success: false, error: 'Cliente não encontrado ou acesso negado.' };
+    }
+
+    const dbClient = await prisma.client.update({
+      where: { id },
+      data: {
+        status: 'archived',
+        archivedAt: new Date(),
+      },
+    });
+
+    // Create Audit Log
+    await prisma.auditLog.create({
+      data: {
+        action: 'CLIENT_ARCHIVED',
+        target: dbClient.id,
+        organizationId: activeOrgId,
+        userId: executorId,
+      },
+    });
+
+    return { success: true, data: mapDbClientToClient(dbClient) };
+  } catch (error) {
+    console.error('Error in archiveClient server action:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Erro ao arquivar cliente.'
+    };
   }
-
-  const activeOrgId = session.session.activeOrganizationId;
-  const executorId = session.user.id;
-  await validateTenantAccess(activeOrgId);
-
-  const existingClient = await prisma.client.findFirst({
-    where: { id, organizationId: activeOrgId }
-  });
-  if (!existingClient) {
-    throw new Error('Cliente não encontrado ou acesso negado.');
-  }
-
-  const dbClient = await prisma.client.update({
-    where: { id },
-    data: {
-      status: 'archived',
-      archivedAt: new Date(),
-    },
-  });
-
-  // Create Audit Log
-  await prisma.auditLog.create({
-    data: {
-      action: 'CLIENT_ARCHIVED',
-      target: dbClient.id,
-      organizationId: activeOrgId,
-      userId: executorId,
-    },
-  });
-
-  return mapDbClientToClient(dbClient);
 }
 
-export async function restoreClient(id: string): Promise<Client> {
+export async function restoreClient(id: string): Promise<{ success: boolean; data?: Client; error?: string }> {
   if (!isDatabaseDataMode) {
-    throw new Error('Operação disponível apenas no modo database.');
+    return { success: false, error: 'Operação disponível apenas no modo database.' };
   }
 
-  const session = await getSession();
-  if (!session || !session.session.activeOrganizationId) {
-    throw new Error('Não autorizado: Organização ativa não selecionada.');
+  try {
+    const session = await getSession();
+    if (!session || !session.session.activeOrganizationId) {
+      return { success: false, error: 'Não autorizado: Organização ativa não selecionada.' };
+    }
+
+    const activeOrgId = session.session.activeOrganizationId;
+    const executorId = session.user.id;
+    await validateTenantAccess(activeOrgId);
+
+    const existingClient = await prisma.client.findFirst({
+      where: { id, organizationId: activeOrgId }
+    });
+    if (!existingClient) {
+      return { success: false, error: 'Cliente não encontrado ou acesso negado.' };
+    }
+
+    const dbClient = await prisma.client.update({
+      where: { id },
+      data: {
+        status: 'active',
+        archivedAt: null,
+      },
+    });
+
+    // Create Audit Log
+    await prisma.auditLog.create({
+      data: {
+        action: 'CLIENT_RESTORED',
+        target: dbClient.id,
+        organizationId: activeOrgId,
+        userId: executorId,
+      },
+    });
+
+    return { success: true, data: mapDbClientToClient(dbClient) };
+  } catch (error) {
+    console.error('Error in restoreClient server action:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Erro ao restaurar cliente.'
+    };
   }
-
-  const activeOrgId = session.session.activeOrganizationId;
-  const executorId = session.user.id;
-  await validateTenantAccess(activeOrgId);
-
-  const existingClient = await prisma.client.findFirst({
-    where: { id, organizationId: activeOrgId }
-  });
-  if (!existingClient) {
-    throw new Error('Cliente não encontrado ou acesso negado.');
-  }
-
-  const dbClient = await prisma.client.update({
-    where: { id },
-    data: {
-      status: 'active',
-      archivedAt: null,
-    },
-  });
-
-  // Create Audit Log
-  await prisma.auditLog.create({
-    data: {
-      action: 'CLIENT_RESTORED',
-      target: dbClient.id,
-      organizationId: activeOrgId,
-      userId: executorId,
-    },
-  });
-
-  return mapDbClientToClient(dbClient);
 }

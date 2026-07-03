@@ -174,7 +174,11 @@ export default function ClientesPage() {
     if (!window.confirm('Tem certeza que deseja arquivar este cliente?')) return;
     try {
       setIsLoading(true);
-      await archiveClient(id);
+      const res = await archiveClient(id);
+      if (!res.success) {
+        alert(res.error || 'Erro ao arquivar cliente.');
+        return;
+      }
       await loadClients();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Erro ao arquivar cliente.');
@@ -186,7 +190,11 @@ export default function ClientesPage() {
   const handleRestoreClient = async (id: string) => {
     try {
       setIsLoading(true);
-      await restoreClient(id);
+      const res = await restoreClient(id);
+      if (!res.success) {
+        alert(res.error || 'Erro ao restaurar cliente.');
+        return;
+      }
       await loadClients();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Erro ao restaurar cliente.');
@@ -227,9 +235,17 @@ export default function ClientesPage() {
         };
 
         if (editingClient) {
-          await updateClient(editingClient.id, payload);
+          const res = await updateClient(editingClient.id, payload);
+          if (!res.success) {
+            alert(res.error || 'Erro ao atualizar cliente.');
+            return;
+          }
         } else {
-          await createClient(payload);
+          const res = await createClient(payload);
+          if (!res.success) {
+            alert(res.error || 'Erro ao cadastrar cliente.');
+            return;
+          }
         }
 
         await loadClients();

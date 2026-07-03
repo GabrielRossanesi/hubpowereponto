@@ -111,7 +111,22 @@ export async function validateTenantAccess(organizationId: string): Promise<Tena
   });
 
   if (!member) {
-    throw new Error('Forbidden: User is not a member of this organization.');
+    const user = await prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { platformRole: true },
+    });
+
+    const isPlatformOperator = user?.platformRole === 'operator' || user?.platformRole === 'platform_admin';
+    if (!isPlatformOperator) {
+      throw new Error('Forbidden: User is not a member of this organization.');
+    }
+
+    return {
+      id: 'membership_operator_bypass_id',
+      role: 'owner',
+      organizationId,
+      userId: session.user.id,
+    };
   }
 
   return {
