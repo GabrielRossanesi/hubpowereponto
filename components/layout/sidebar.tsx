@@ -109,12 +109,23 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
     .slice(0, 2)
     .toUpperCase() || 'US';
 
-  // Filter items based on features active in the tenant's plan
+  // Filter items based on features active in the tenant's plan and operator permissions
   const filterMenuItems = (items: MenuItem[]) => {
     return items.filter(item => {
-      if (!item.feature) return true;
-      const key = item.feature as keyof Omit<typeof currentFeatures, 'organizationId'>;
-      return currentFeatures ? currentFeatures[key] !== false : true;
+      if (item.feature) {
+        const key = item.feature as keyof Omit<typeof currentFeatures, 'organizationId'>;
+        if (currentFeatures && currentFeatures[key] === false) return false;
+      }
+
+      if (item.isOperator) {
+        if (isDatabaseMode) {
+          const userPlatformRole = (session?.user as any)?.platformRole;
+          return userPlatformRole === 'operator' || userPlatformRole === 'platform_admin';
+        }
+        return true;
+      }
+
+      return true;
     });
   };
 

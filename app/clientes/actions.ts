@@ -54,8 +54,10 @@ export async function getClients(includeArchived = false): Promise<Client[]> {
   }
 
   const activeOrgId = session.session.activeOrganizationId;
-  await validateTenantAccess(activeOrgId);
-  await checkClientsFeature(activeOrgId);
+  await Promise.all([
+    validateTenantAccess(activeOrgId),
+    checkClientsFeature(activeOrgId),
+  ]);
 
   const dbClients = await prisma.client.findMany({
     where: {

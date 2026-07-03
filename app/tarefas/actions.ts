@@ -65,8 +65,10 @@ export async function getTasks(includeArchived = false): Promise<TeamTask[]> {
   }
 
   const activeOrgId = session.session.activeOrganizationId;
-  await validateTenantAccess(activeOrgId);
-  await checkTasksFeature(activeOrgId);
+  await Promise.all([
+    validateTenantAccess(activeOrgId),
+    checkTasksFeature(activeOrgId),
+  ]);
 
   const dbTasks = await prisma.task.findMany({
     where: {
