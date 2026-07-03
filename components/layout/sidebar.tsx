@@ -119,8 +119,8 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
 
       if (item.isOperator) {
         if (isDatabaseMode) {
-          const userPlatformRole = (session?.user as any)?.platformRole;
-          return userPlatformRole === 'operator' || userPlatformRole === 'platform_admin';
+          const platformRole = databaseTenantContext?.platformRole;
+          return platformRole === 'operator' || platformRole === 'platform_admin';
         }
         return true;
       }

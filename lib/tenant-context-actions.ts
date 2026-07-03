@@ -9,6 +9,7 @@ export interface DatabaseTenantContext {
   organization: Organization;
   features: OrganizationFeatures;
   membershipRole: UserRole;
+  platformRole?: string | null;
 }
 
 function getDefaultFeatures(planId: PlanType): Omit<OrganizationFeatures, 'organizationId'> {
@@ -55,22 +56,28 @@ export async function getCurrentDatabaseTenantContext(): Promise<DatabaseTenantC
 
   const preferredOrganizationId = session.session.activeOrganizationId || undefined;
 
-  const membership = await prisma.member.findFirst({
-    where: {
-      userId: session.user.id,
-      ...(preferredOrganizationId ? { organizationId: preferredOrganizationId } : {}),
-    },
-    include: {
-      organization: {
-        include: {
-          features: true,
+  const [membership, user] = await Promise.all([
+    prisma.member.findFirst({
+      where: {
+        userId: session.user.id,
+        ...(preferredOrganizationId ? { organizationId: preferredOrganizationId } : {}),
+      },
+      include: {
+        organization: {
+          include: {
+            features: true,
+          },
         },
       },
-    },
-    orderBy: {
-      createdAt: 'asc',
-    },
-  });
+      orderBy: {
+        createdAt: 'asc',
+      },
+    }),
+    prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { platformRole: true },
+    }),
+  ]);
 
   if (!membership) return null;
 
@@ -105,5 +112,6 @@ export async function getCurrentDatabaseTenantContext(): Promise<DatabaseTenantC
       financial: org.features?.financial ?? defaultFeatures.financial,
     },
     membershipRole: membership.role as UserRole,
+    platformRole: user?.platformRole,
   };
 }
