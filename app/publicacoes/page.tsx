@@ -302,14 +302,9 @@ export default function PublicacoesPage() {
     }
   };
 
-  const handleOpenExternalStock = () => {
-    const clientObj = isDatabaseMode
-      ? dbClients.find(c => c.id === selectedClientId)
-      : clients.find(c => c.id === selectedClientId);
-    const query = clientObj?.companyName || caption?.slice(0, 30) || 'social media';
-    const url = `https://unsplash.com/s/photos/${encodeURIComponent(query)}`;
+  const handleOpenImgBB = () => {
     if (typeof window !== 'undefined') {
-      window.open(url, '_blank', 'noopener,noreferrer');
+      window.open('https://imgbb.com/', '_blank', 'noopener,noreferrer');
     }
   };
 
@@ -658,10 +653,10 @@ export default function PublicacoesPage() {
                     <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block">URL da Imagem de Destaque</label>
                     <button
                       type="button"
-                      onClick={handleOpenExternalStock}
+                      onClick={handleOpenImgBB}
                       className="text-xs font-semibold text-primary hover:text-primary/80 flex items-center gap-1 hover:underline cursor-pointer"
                     >
-                      <ImageIcon className="h-3.5 w-3.5" /> Buscar imagem externa (Unsplash)
+                      <ImageIcon className="h-3.5 w-3.5" /> Gerar link da imagem (ImgBB)
                     </button>
                   </div>
                   <Input
@@ -672,7 +667,7 @@ export default function PublicacoesPage() {
                     required
                   />
                   <p className="text-[10px] text-muted-foreground/80">
-                    Dica: abra o banco de imagens, copie a URL da imagem desejada (clique com botão direito &gt; copiar endereço da imagem) e cole no campo acima.
+                    Faça upload temporário da arte no ImgBB, copie o link direto da imagem (clique com botão direito &gt; copiar endereço da imagem) e cole no campo acima.
                   </p>
                 </div>
               ) : (
@@ -700,10 +695,10 @@ export default function PublicacoesPage() {
                 <label className="text-xs font-bold text-muted-foreground uppercase tracking-wider block">Imagens do Carrossel (URLs)</label>
                 <button
                   type="button"
-                  onClick={handleOpenExternalStock}
+                  onClick={handleOpenImgBB}
                   className="text-xs font-semibold text-primary hover:text-primary/80 flex items-center gap-1 hover:underline cursor-pointer"
                 >
-                  <ImageIcon className="h-3.5 w-3.5" /> Buscar imagem externa (Unsplash)
+                  <ImageIcon className="h-3.5 w-3.5" /> Gerar link da imagem (ImgBB)
                 </button>
               </div>
               
@@ -753,7 +748,7 @@ export default function PublicacoesPage() {
                   </Button>
                 )}
                 <p className="text-[10px] text-muted-foreground/80">
-                  Dica: abra o banco de imagens, copie a URL da imagem desejada e cole nos campos.
+                  Faça upload temporário da arte no ImgBB, copie o link direto da imagem e cole nos campos.
                 </p>
               </div>
             </div>
