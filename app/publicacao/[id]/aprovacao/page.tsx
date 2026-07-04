@@ -759,7 +759,7 @@ function ApprovalContent() {
               {/* Image box Outer Container */}
               <div 
                 onClick={openModal}
-                className="aspect-square bg-zinc-950 overflow-hidden relative border-b border-border/20 cursor-pointer group touch-pan-y"
+                className="aspect-square bg-zinc-50 overflow-hidden relative border-b border-border/20 cursor-pointer group touch-pan-y"
               >
                 {images.length > 0 ? (
                   <>
@@ -775,7 +775,7 @@ function ApprovalContent() {
                       {images.map((imgUrl, idx) => (
                         <div 
                           key={imgUrl} 
-                          className="relative h-full min-w-full shrink-0 basis-full flex items-center justify-center bg-zinc-950"
+                          className="relative h-full min-w-full shrink-0 basis-full flex items-center justify-center bg-zinc-50"
                         >
                           {brokenImages[imgUrl] ? (
                             <div className="w-full h-full flex flex-col items-center justify-center p-4 text-center bg-card text-muted-foreground gap-2 select-none animate-in fade-in duration-200">
@@ -798,9 +798,9 @@ function ApprovalContent() {
                             <>
                               {/* Loader overlay */}
                               {!loadedImages[imgUrl] && (
-                                <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950 text-muted-foreground gap-3 select-none animate-in fade-in duration-200">
+                                <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-50 text-muted-foreground gap-3 select-none animate-in fade-in duration-200">
                                   <div className="animate-spin h-6 w-6 border-2 border-primary border-t-transparent rounded-full" />
-                                  <span className="text-[11px] font-semibold text-white/50 tracking-wider uppercase">Carregando arte...</span>
+                                  <span className="text-[11px] font-semibold text-zinc-400 tracking-wider uppercase">Carregando arte...</span>
                                 </div>
                               )}
 
