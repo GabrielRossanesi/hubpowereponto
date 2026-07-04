@@ -178,6 +178,55 @@ function ApprovalContent() {
     loadedImagesRef.current = loadedImages;
   }, [loadedImages]);
 
+  // Touch Swiping Refs for Mobile Swipe
+  const touchStartX = useRef<number | null>(null);
+  const touchStartY = useRef<number | null>(null);
+  const touchEndX = useRef<number | null>(null);
+  const touchEndY = useRef<number | null>(null);
+  const hasSwiped = useRef(false);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    touchStartX.current = touch.clientX;
+    touchStartY.current = touch.clientY;
+    touchEndX.current = null;
+    touchEndY.current = null;
+    hasSwiped.current = false;
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    touchEndX.current = touch.clientX;
+    touchEndY.current = touch.clientY;
+  };
+
+  const handleTouchEnd = (onSwipeLeft: () => void, onSwipeRight: () => void) => {
+    if (
+      touchStartX.current === null ||
+      touchStartY.current === null ||
+      touchEndX.current === null ||
+      touchEndY.current === null
+    ) {
+      return;
+    }
+
+    const swipeDistanceX = touchStartX.current - touchEndX.current;
+    const swipeDistanceY = touchStartY.current - touchEndY.current;
+    const minSwipeDistance = 50;
+
+    // Check if horizontal movement is dominant and meets minimum threshold
+    if (Math.abs(swipeDistanceX) > Math.abs(swipeDistanceY) && Math.abs(swipeDistanceX) > minSwipeDistance) {
+      hasSwiped.current = true;
+      if (swipeDistanceX > 0) {
+        // Swiped left = next image
+        onSwipeLeft();
+      } else {
+        // Swiped right = previous image
+        onSwipeRight();
+      }
+    }
+  };
+
   const markImageAsLoaded = (url: string) => {
     if (!url) return;
     setLoadedImages(prev => {
@@ -187,6 +236,10 @@ function ApprovalContent() {
   };
 
   const openModal = () => {
+    if (hasSwiped.current) {
+      hasSwiped.current = false; // Reset flag and prevent opening lightbox
+      return;
+    }
     if (images.length > 0 && !brokenImages[images[carouselIndex]]) {
       setModalIndex(carouselIndex);
       setIsModalOpen(true);
@@ -534,6 +587,20 @@ function ApprovalContent() {
               {/* Image box */}
               <div 
                 onClick={openModal}
+                onTouchStart={handleTouchStart}
+                onTouchMove={handleTouchMove}
+                onTouchEnd={() => handleTouchEnd(
+                  () => {
+                    if (isCarousel && carouselIndex < images.length - 1) {
+                      setCarouselIndex(prev => prev + 1);
+                    }
+                  },
+                  () => {
+                    if (isCarousel && carouselIndex > 0) {
+                      setCarouselIndex(prev => prev - 1);
+                    }
+                  }
+                )}
                 className="aspect-square bg-zinc-950 flex items-center justify-center overflow-hidden relative border-b border-border/20 cursor-pointer group"
               >
                 {images.length > 0 ? (
@@ -806,6 +873,12 @@ function ApprovalContent() {
           <div 
             className="relative flex items-center justify-center w-full h-full max-w-5xl max-h-[80vh] px-4 md:px-12"
             onClick={(e) => e.stopPropagation()}
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={() => handleTouchEnd(
+              () => handleNextModalImage(),
+              () => handlePrevModalImage()
+            )}
           >
             {brokenImages[images[modalIndex]] ? (
               <div className="w-full h-full flex flex-col items-center justify-center p-4 text-center bg-card text-muted-foreground gap-2 select-none animate-in fade-in duration-200 max-w-md mx-auto rounded-xl border border-border/40">
