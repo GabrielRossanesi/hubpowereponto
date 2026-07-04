@@ -178,54 +178,226 @@ function ApprovalContent() {
     loadedImagesRef.current = loadedImages;
   }, [loadedImages]);
 
+  // Track DOM Refs
+  const mainTrackRef = useRef<HTMLDivElement | null>(null);
+  const modalTrackRef = useRef<HTMLDivElement | null>(null);
+
   // Touch Swiping Refs for Mobile Swipe
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
   const touchEndX = useRef<number | null>(null);
   const touchEndY = useRef<number | null>(null);
   const hasSwiped = useRef(false);
+  const isDragging = useRef(false);
 
-  const handleTouchStart = (e: React.TouchEvent) => {
+  // Reset touch refs helper
+  const resetTouchRefs = () => {
+    touchStartX.current = null;
+    touchStartY.current = null;
+    touchEndX.current = null;
+    touchEndY.current = null;
+    isDragging.current = false;
+  };
+
+  // Touch handlers for Main Preview
+  const handleMainTouchStart = (e: React.TouchEvent) => {
+    if (images.length <= 1) return;
     const touch = e.touches[0];
     touchStartX.current = touch.clientX;
     touchStartY.current = touch.clientY;
     touchEndX.current = null;
     touchEndY.current = null;
     hasSwiped.current = false;
+    isDragging.current = true;
+
+    if (mainTrackRef.current) {
+      mainTrackRef.current.style.transition = 'none';
+    }
   };
 
-  const handleTouchMove = (e: React.TouchEvent) => {
+  const handleMainTouchMove = (e: React.TouchEvent) => {
+    if (!isDragging.current || images.length <= 1 || !mainTrackRef.current) return;
+
     const touch = e.touches[0];
     touchEndX.current = touch.clientX;
     touchEndY.current = touch.clientY;
-  };
 
-  const handleTouchEnd = (onSwipeLeft: () => void, onSwipeRight: () => void) => {
-    if (
-      touchStartX.current === null ||
-      touchStartY.current === null ||
-      touchEndX.current === null ||
-      touchEndY.current === null
-    ) {
+    const dragDelta = touchEndX.current - touchStartX.current!;
+    const dragDeltaY = touchEndY.current - touchStartY.current!;
+
+    // If vertical scroll is dominant, don't drag the carousel
+    if (Math.abs(dragDeltaY) > Math.abs(dragDelta)) {
+      isDragging.current = false;
+      mainTrackRef.current.style.transition = 'transform 300ms ease-out';
+      mainTrackRef.current.style.transform = `translateX(-${carouselIndex * 100}%)`;
       return;
     }
 
-    const swipeDistanceX = touchStartX.current - touchEndX.current;
-    const swipeDistanceY = touchStartY.current - touchEndY.current;
-    const minSwipeDistance = 50;
+    // Prevent browser horizontal navigation/gestures if horizontal swipe is dominant
+    if (e.cancelable) {
+      e.preventDefault();
+    }
 
-    // Check if horizontal movement is dominant and meets minimum threshold
-    if (Math.abs(swipeDistanceX) > Math.abs(swipeDistanceY) && Math.abs(swipeDistanceX) > minSwipeDistance) {
+    const containerWidth = mainTrackRef.current.parentElement?.offsetWidth || 0;
+    
+    // Elastic resistance at boundaries
+    let finalDragDelta = dragDelta;
+    if (carouselIndex === 0 && dragDelta > 0) {
+      finalDragDelta = dragDelta * 0.35; // 35% resistance dragging right at start
+    } else if (carouselIndex === images.length - 1 && dragDelta < 0) {
+      finalDragDelta = dragDelta * 0.35; // 35% resistance dragging left at end
+    }
+
+    const basePosition = -carouselIndex * containerWidth;
+    const currentTranslate = basePosition + finalDragDelta;
+    mainTrackRef.current.style.transform = `translateX(${currentTranslate}px)`;
+  };
+
+  const handleMainTouchEnd = () => {
+    if (!isDragging.current || images.length <= 1 || !mainTrackRef.current) return;
+
+    // Enable transition back
+    mainTrackRef.current.style.transition = 'transform 300ms ease-out';
+
+    if (touchStartX.current === null || touchEndX.current === null) {
+      mainTrackRef.current.style.transform = `translateX(-${carouselIndex * 100}%)`;
+      resetTouchRefs();
+      return;
+    }
+
+    const dragDelta = touchEndX.current - touchStartX.current;
+    const dragDeltaY = touchEndY.current! - (touchStartY.current || touchEndY.current!);
+    const minSwipeDistance = 45; // Threshold of 45px
+
+    if (Math.abs(dragDelta) > Math.abs(dragDeltaY) && Math.abs(dragDelta) > minSwipeDistance) {
       hasSwiped.current = true;
-      if (swipeDistanceX > 0) {
-        // Swiped left = next image
-        onSwipeLeft();
+      if (dragDelta < 0 && carouselIndex < images.length - 1) {
+        // Next image
+        const newIndex = carouselIndex + 1;
+        mainTrackRef.current.style.transform = `translateX(-${newIndex * 100}%)`;
+        setCarouselIndex(newIndex);
+      } else if (dragDelta > 0 && carouselIndex > 0) {
+        // Previous image
+        const newIndex = carouselIndex - 1;
+        mainTrackRef.current.style.transform = `translateX(-${newIndex * 100}%)`;
+        setCarouselIndex(newIndex);
       } else {
-        // Swiped right = previous image
-        onSwipeRight();
+        // Boundary bounce back
+        mainTrackRef.current.style.transform = `translateX(-${carouselIndex * 100}%)`;
       }
+    } else {
+      // Snap back
+      mainTrackRef.current.style.transform = `translateX(-${carouselIndex * 100}%)`;
+    }
+    resetTouchRefs();
+  };
+
+  // Touch handlers for Lightbox Modal
+  const handleModalTouchStart = (e: React.TouchEvent) => {
+    if (images.length <= 1) return;
+    const touch = e.touches[0];
+    touchStartX.current = touch.clientX;
+    touchStartY.current = touch.clientY;
+    touchEndX.current = null;
+    touchEndY.current = null;
+    hasSwiped.current = false;
+    isDragging.current = true;
+
+    if (modalTrackRef.current) {
+      modalTrackRef.current.style.transition = 'none';
     }
   };
+
+  const handleModalTouchMove = (e: React.TouchEvent) => {
+    if (!isDragging.current || images.length <= 1 || !modalTrackRef.current) return;
+
+    const touch = e.touches[0];
+    touchEndX.current = touch.clientX;
+    touchEndY.current = touch.clientY;
+
+    const dragDelta = touchEndX.current - touchStartX.current!;
+    const dragDeltaY = touchEndY.current - touchStartY.current!;
+
+    // If vertical scroll is dominant, don't drag the modal carousel
+    if (Math.abs(dragDeltaY) > Math.abs(dragDelta)) {
+      isDragging.current = false;
+      modalTrackRef.current.style.transition = 'transform 300ms ease-out';
+      modalTrackRef.current.style.transform = `translateX(-${modalIndex * 100}%)`;
+      return;
+    }
+
+    if (e.cancelable) {
+      e.preventDefault();
+    }
+
+    const containerWidth = modalTrackRef.current.parentElement?.offsetWidth || 0;
+    
+    // Elastic resistance at boundaries
+    let finalDragDelta = dragDelta;
+    if (modalIndex === 0 && dragDelta > 0) {
+      finalDragDelta = dragDelta * 0.35;
+    } else if (modalIndex === images.length - 1 && dragDelta < 0) {
+      finalDragDelta = dragDelta * 0.35;
+    }
+
+    const basePosition = -modalIndex * containerWidth;
+    const currentTranslate = basePosition + finalDragDelta;
+    modalTrackRef.current.style.transform = `translateX(${currentTranslate}px)`;
+  };
+
+  const handleModalTouchEnd = () => {
+    if (!isDragging.current || images.length <= 1 || !modalTrackRef.current) return;
+
+    // Enable transition back
+    modalTrackRef.current.style.transition = 'transform 300ms ease-out';
+
+    if (touchStartX.current === null || touchEndX.current === null) {
+      modalTrackRef.current.style.transform = `translateX(-${modalIndex * 100}%)`;
+      resetTouchRefs();
+      return;
+    }
+
+    const dragDelta = touchEndX.current - touchStartX.current;
+    const dragDeltaY = touchEndY.current! - (touchStartY.current || touchEndY.current!);
+    const minSwipeDistance = 45; // Threshold of 45px
+
+    if (Math.abs(dragDelta) > Math.abs(dragDeltaY) && Math.abs(dragDelta) > minSwipeDistance) {
+      hasSwiped.current = true;
+      if (dragDelta < 0 && modalIndex < images.length - 1) {
+        // Next image
+        const newIndex = modalIndex + 1;
+        modalTrackRef.current.style.transform = `translateX(-${newIndex * 100}%)`;
+        setModalIndex(newIndex);
+      } else if (dragDelta > 0 && modalIndex > 0) {
+        // Previous image
+        const newIndex = modalIndex - 1;
+        modalTrackRef.current.style.transform = `translateX(-${newIndex * 100}%)`;
+        setModalIndex(newIndex);
+      } else {
+        // Boundary bounce back
+        modalTrackRef.current.style.transform = `translateX(-${modalIndex * 100}%)`;
+      }
+    } else {
+      // Snap back
+      modalTrackRef.current.style.transform = `translateX(-${modalIndex * 100}%)`;
+    }
+    resetTouchRefs();
+  };
+
+  // Synchronize tracks on index change (keyboard, button, dots, orientation resize)
+  useEffect(() => {
+    if (mainTrackRef.current) {
+      mainTrackRef.current.style.transition = 'transform 300ms ease-out';
+      mainTrackRef.current.style.transform = `translateX(-${carouselIndex * 100}%)`;
+    }
+  }, [carouselIndex]);
+
+  useEffect(() => {
+    if (modalTrackRef.current) {
+      modalTrackRef.current.style.transition = 'transform 300ms ease-out';
+      modalTrackRef.current.style.transform = `translateX(-${modalIndex * 100}%)`;
+    }
+  }, [modalIndex]);
 
   const markImageAsLoaded = (url: string) => {
     if (!url) return;
@@ -584,85 +756,90 @@ function ApprovalContent() {
                 </div>
               </div>
               
-              {/* Image box */}
+              {/* Image box Outer Container */}
               <div 
                 onClick={openModal}
-                onTouchStart={handleTouchStart}
-                onTouchMove={handleTouchMove}
-                onTouchEnd={() => handleTouchEnd(
-                  () => {
-                    if (isCarousel && carouselIndex < images.length - 1) {
-                      setCarouselIndex(prev => prev + 1);
-                    }
-                  },
-                  () => {
-                    if (isCarousel && carouselIndex > 0) {
-                      setCarouselIndex(prev => prev - 1);
-                    }
-                  }
-                )}
-                className="aspect-square bg-zinc-950 flex items-center justify-center overflow-hidden relative border-b border-border/20 cursor-pointer group"
+                className="aspect-square bg-zinc-950 overflow-hidden relative border-b border-border/20 cursor-pointer group touch-pan-y"
               >
                 {images.length > 0 ? (
                   <>
-                    {brokenImages[images[carouselIndex]] ? (
-                      <div className="w-full h-full flex flex-col items-center justify-center p-4 text-center bg-card text-muted-foreground gap-2 select-none animate-in fade-in duration-200">
-                        <AlertCircle className="h-8 w-8 text-warning shrink-0" />
-                        <span className="text-sm font-bold text-foreground">Imagem não carregada</span>
-                        <span className="text-xs text-muted-foreground/90 max-w-[240px] leading-relaxed">
-                          Não foi possível carregar a mídia. Verifique se o endereço da imagem está correto.
-                        </span>
-                        <a 
-                          href={images[carouselIndex]}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-primary font-bold hover:underline mt-1 cursor-pointer flex items-center gap-0.5"
-                          onClick={(e) => e.stopPropagation()}
+                    {/* Inner Swiper Track */}
+                    <div 
+                      ref={mainTrackRef}
+                      onTouchStart={handleMainTouchStart}
+                      onTouchMove={handleMainTouchMove}
+                      onTouchEnd={handleMainTouchEnd}
+                      className="flex h-full w-full transition-transform duration-300 ease-out"
+                      style={{ transform: `translateX(-${carouselIndex * 100}%)` }}
+                    >
+                      {images.map((imgUrl, idx) => (
+                        <div 
+                          key={imgUrl} 
+                          className="relative h-full min-w-full shrink-0 basis-full flex items-center justify-center bg-zinc-950"
                         >
-                          Abrir link original <ExternalLink className="h-3 w-3" />
-                        </a>
-                      </div>
-                    ) : (
-                      <>
-                        {/* Loader overlay */}
-                        {!loadedImages[images[carouselIndex]] && (
-                          <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950 text-muted-foreground gap-3 select-none animate-in fade-in duration-200">
-                            <div className="animate-spin h-6 w-6 border-2 border-primary border-t-transparent rounded-full" />
-                            <span className="text-[11px] font-semibold text-white/50 tracking-wider uppercase">Carregando arte...</span>
-                          </div>
-                        )}
-
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img 
-                          src={images[carouselIndex]} 
-                          alt={`Post preview creative ${carouselIndex + 1}`} 
-                          className={`object-contain w-full h-full max-h-full max-w-full select-none transition-opacity duration-300 ${
-                            loadedImages[images[carouselIndex]] ? 'opacity-100' : 'opacity-0'
-                          }`}
-                          onLoad={() => markImageAsLoaded(images[carouselIndex])}
-                          onError={() => {
-                            const url = images[carouselIndex];
-                            setBrokenImages(prev => ({ ...prev, [url]: true }));
-                          }}
-                        />
-                        
-                        {/* Hover overlay for desktop & tap indicator for mobile */}
-                        {loadedImages[images[carouselIndex]] && (
-                          <>
-                            <div className="absolute inset-0 bg-black/0 md:group-hover:bg-black/35 flex items-center justify-center opacity-0 md:group-hover:opacity-100 transition-all duration-200 pointer-events-none">
-                              <span className="hidden md:flex bg-black/75 text-white text-xs px-3 py-1.5 rounded-full font-medium items-center gap-1.5 backdrop-blur-xs">
-                                <Maximize2 className="h-3.5 w-3.5" /> Clique para ampliar
+                          {brokenImages[imgUrl] ? (
+                            <div className="w-full h-full flex flex-col items-center justify-center p-4 text-center bg-card text-muted-foreground gap-2 select-none animate-in fade-in duration-200">
+                              <AlertCircle className="h-8 w-8 text-warning shrink-0" />
+                              <span className="text-sm font-bold text-foreground">Imagem não carregada</span>
+                              <span className="text-xs text-muted-foreground/90 max-w-[240px] leading-relaxed">
+                                Não foi possível carregar a mídia. Verifique se o endereço da imagem está correto.
                               </span>
+                              <a 
+                                href={imgUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-primary font-bold hover:underline mt-1 cursor-pointer flex items-center gap-0.5"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                Abrir link original <ExternalLink className="h-3 w-3" />
+                              </a>
                             </div>
+                          ) : (
+                            <>
+                              {/* Loader overlay */}
+                              {!loadedImages[imgUrl] && (
+                                <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950 text-muted-foreground gap-3 select-none animate-in fade-in duration-200">
+                                  <div className="animate-spin h-6 w-6 border-2 border-primary border-t-transparent rounded-full" />
+                                  <span className="text-[11px] font-semibold text-white/50 tracking-wider uppercase">Carregando arte...</span>
+                                </div>
+                              )}
 
-                            {/* Mobile zoom indicator (fixed top right) */}
-                            <div className="absolute top-2.5 right-2.5 bg-black/60 text-white/90 p-1.5 rounded-full backdrop-blur-xs transition-colors pointer-events-none z-10 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-200">
-                              <Maximize2 className="h-3.5 w-3.5" />
-                            </div>
-                          </>
-                        )}
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img 
+                                src={imgUrl} 
+                                alt={`Post preview creative ${idx + 1}`} 
+                                className={`object-contain w-full h-full max-h-full max-w-full select-none transition-opacity duration-300 ${
+                                  loadedImages[imgUrl] ? 'opacity-100' : 'opacity-0'
+                                }`}
+                                onLoad={() => markImageAsLoaded(imgUrl)}
+                                onError={() => {
+                                  setBrokenImages(prev => ({ ...prev, [imgUrl]: true }));
+                                }}
+                              />
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Navigation Overlays (visible on active slide only) */}
+                    {loadedImages[images[carouselIndex]] && !brokenImages[images[carouselIndex]] && (
+                      <>
+                        {/* Hover overlay for desktop & tap indicator for mobile */}
+                        <div className="absolute inset-0 bg-black/0 md:group-hover:bg-black/35 flex items-center justify-center opacity-0 md:group-hover:opacity-100 transition-all duration-200 pointer-events-none">
+                          <span className="hidden md:flex bg-black/75 text-white text-xs px-3 py-1.5 rounded-full font-medium items-center gap-1.5 backdrop-blur-xs">
+                            <Maximize2 className="h-3.5 w-3.5" /> Clique para ampliar
+                          </span>
+                        </div>
+
+                        {/* Mobile zoom indicator (fixed top right) */}
+                        <div className="absolute top-2.5 right-2.5 bg-black/60 text-white/90 p-1.5 rounded-full backdrop-blur-xs transition-colors pointer-events-none z-10 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-200">
+                          <Maximize2 className="h-3.5 w-3.5" />
+                        </div>
                       </>
                     )}
+
+                    {/* Carousel indicators/navigation */}
                     {isCarousel && (
                       <>
                         <div className="absolute bottom-2.5 left-2.5 bg-black/60 px-2 py-0.5 rounded text-[10px] text-white font-semibold z-10">
@@ -871,48 +1048,61 @@ function ApprovalContent() {
 
           {/* Modal content container */}
           <div 
-            className="relative flex items-center justify-center w-full h-full max-w-5xl max-h-[80vh] px-4 md:px-12"
+            className="relative flex items-center justify-center w-full h-full max-w-5xl max-h-[80vh] px-4 md:px-12 overflow-hidden touch-pan-y"
             onClick={(e) => e.stopPropagation()}
-            onTouchStart={handleTouchStart}
-            onTouchMove={handleTouchMove}
-            onTouchEnd={() => handleTouchEnd(
-              () => handleNextModalImage(),
-              () => handlePrevModalImage()
-            )}
           >
-            {brokenImages[images[modalIndex]] ? (
-              <div className="w-full h-full flex flex-col items-center justify-center p-4 text-center bg-card text-muted-foreground gap-2 select-none animate-in fade-in duration-200 max-w-md mx-auto rounded-xl border border-border/40">
-                <AlertCircle className="h-8 w-8 text-warning shrink-0" />
-                <span className="text-sm font-bold text-foreground">Imagem não carregada</span>
-                <span className="text-xs text-muted-foreground/90 max-w-[240px] leading-relaxed">
-                  Não foi possível carregar a mídia no modal. Verifique se o endereço da imagem está correto.
-                </span>
+            {images.length > 0 ? (
+              <div 
+                ref={modalTrackRef}
+                onTouchStart={handleModalTouchStart}
+                onTouchMove={handleModalTouchMove}
+                onTouchEnd={handleModalTouchEnd}
+                className="flex h-full w-full transition-transform duration-300 ease-out"
+                style={{ transform: `translateX(-${modalIndex * 100}%)` }}
+              >
+                {images.map((imgUrl, idx) => (
+                  <div 
+                    key={imgUrl} 
+                    className="relative h-full min-w-full shrink-0 basis-full flex items-center justify-center bg-black/0"
+                  >
+                    {brokenImages[imgUrl] ? (
+                      <div className="w-full h-full flex flex-col items-center justify-center p-4 text-center bg-card text-muted-foreground gap-2 select-none animate-in fade-in duration-200 max-w-md mx-auto rounded-xl border border-border/40">
+                        <AlertCircle className="h-8 w-8 text-warning shrink-0" />
+                        <span className="text-sm font-bold text-foreground">Imagem não carregada</span>
+                        <span className="text-xs text-muted-foreground/90 max-w-[240px] leading-relaxed">
+                          Não foi possível carregar a mídia no modal. Verifique se o endereço da imagem está correto.
+                        </span>
+                      </div>
+                    ) : (
+                      <>
+                        {/* Loader inside modal */}
+                        {!loadedImages[imgUrl] && (
+                          <div className="absolute inset-0 flex flex-col items-center justify-center text-white/70 gap-3 select-none animate-in fade-in duration-200">
+                            <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full" />
+                            <span className="text-[11px] font-semibold text-white/50 tracking-wider uppercase">Carregando arte...</span>
+                          </div>
+                        )}
+
+                        {/* Main Image */}
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img 
+                          src={imgUrl} 
+                          alt={`Post full preview ${idx + 1}`}
+                          className={`max-w-full max-h-full object-contain rounded-xs select-none transition-opacity duration-300 shadow-2xl ${
+                            loadedImages[imgUrl] ? 'opacity-100' : 'opacity-0'
+                          }`}
+                          onLoad={() => markImageAsLoaded(imgUrl)}
+                          onError={() => {
+                            setBrokenImages(prev => ({ ...prev, [imgUrl]: true }));
+                          }}
+                        />
+                      </>
+                    )}
+                  </div>
+                ))}
               </div>
             ) : (
-              <>
-                {/* Loader inside modal */}
-                {!loadedImages[images[modalIndex]] && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white/70 gap-3 select-none animate-in fade-in duration-200">
-                    <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full" />
-                    <span className="text-[11px] font-semibold text-white/50 tracking-wider uppercase">Carregando arte...</span>
-                  </div>
-                )}
-
-                {/* Main Image */}
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img 
-                  src={images[modalIndex]} 
-                  alt={`Post full preview ${modalIndex + 1}`}
-                  className={`max-w-full max-h-full object-contain rounded-xs select-none transition-opacity duration-300 shadow-2xl ${
-                    loadedImages[images[modalIndex]] ? 'opacity-100' : 'opacity-0'
-                  }`}
-                  onLoad={() => markImageAsLoaded(images[modalIndex])}
-                  onError={() => {
-                    const url = images[modalIndex];
-                    setBrokenImages(prev => ({ ...prev, [url]: true }));
-                  }}
-                />
-              </>
+              <div className="text-white/70">Nenhuma imagem cadastrada</div>
             )}
 
             {/* Left navigation arrow */}
