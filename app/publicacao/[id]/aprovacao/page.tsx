@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, Suspense, useRef, useMemo } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { 
   ShieldAlert, 
@@ -156,11 +156,13 @@ function ApprovalContent() {
     return () => clearInterval(timer);
   }, [publication]);
 
-  const images = publication?.images?.length
-    ? publication.images
-    : publication?.imageUrl
-      ? [publication.imageUrl]
-      : [];
+  const images = useMemo(() => {
+    return publication?.images?.length
+      ? publication.images
+      : publication?.imageUrl
+        ? [publication.imageUrl]
+        : [];
+  }, [publication]);
   const isCarousel = publication ? (publication.postType === 'carousel' || images.length > 1) : false;
   const channels = publication?.channels?.length
     ? publication.channels
@@ -169,6 +171,20 @@ function ApprovalContent() {
   // Lightbox / Modal States & Logic
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalIndex, setModalIndex] = useState(0);
+  const [loadedImages, setLoadedImages] = useState<Record<string, boolean>>({});
+
+  const loadedImagesRef = useRef(loadedImages);
+  useEffect(() => {
+    loadedImagesRef.current = loadedImages;
+  }, [loadedImages]);
+
+  const markImageAsLoaded = (url: string) => {
+    if (!url) return;
+    setLoadedImages(prev => {
+      if (prev[url]) return prev; // Avoid unnecessary re-renders
+      return { ...prev, [url]: true };
+    });
+  };
 
   const openModal = () => {
     if (images.length > 0 && !brokenImages[images[carouselIndex]]) {
@@ -195,6 +211,55 @@ function ApprovalContent() {
       setModalIndex(prev => prev + 1);
     }
   };
+
+  // Image Preloading Logic
+  useEffect(() => {
+    if (!images || images.length === 0) return;
+
+    const preloadImage = (url: string) => {
+      if (!url || loadedImagesRef.current[url]) return;
+      
+      const img = new Image();
+      img.src = url;
+      img.onload = () => {
+        markImageAsLoaded(url);
+      };
+      img.onerror = () => {
+        setBrokenImages(prev => {
+          if (prev[url]) return prev;
+          return { ...prev, [url]: true };
+        });
+      };
+    };
+
+    // 1. Prioritize current image
+    preloadImage(images[carouselIndex]);
+
+    // 2. Prioritize next image
+    if (carouselIndex + 1 < images.length) {
+      preloadImage(images[carouselIndex + 1]);
+    }
+
+    // 3. Prioritize previous image
+    if (carouselIndex - 1 >= 0) {
+      preloadImage(images[carouselIndex - 1]);
+    }
+
+    // 4. Preload remaining images asynchronously (non-blocking)
+    const remainingUrls = images.filter((url, index) => 
+      index !== carouselIndex && 
+      index !== carouselIndex + 1 && 
+      index !== carouselIndex - 1
+    );
+
+    if (remainingUrls.length > 0) {
+      const timer = setTimeout(() => {
+        remainingUrls.forEach(url => preloadImage(url));
+      }, 300);
+
+      return () => clearTimeout(timer);
+    }
+  }, [images, carouselIndex]);
 
   useEffect(() => {
     if (!isModalOpen) return;
@@ -492,11 +557,22 @@ function ApprovalContent() {
                       </div>
                     ) : (
                       <>
+                        {/* Loader overlay */}
+                        {!loadedImages[images[carouselIndex]] && (
+                          <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950 text-muted-foreground gap-3 select-none animate-in fade-in duration-200">
+                            <div className="animate-spin h-6 w-6 border-2 border-primary border-t-transparent rounded-full" />
+                            <span className="text-[11px] font-semibold text-white/50 tracking-wider uppercase">Carregando arte...</span>
+                          </div>
+                        )}
+
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img 
                           src={images[carouselIndex]} 
                           alt={`Post preview creative ${carouselIndex + 1}`} 
-                          className="object-contain w-full h-full max-h-full max-w-full select-none"
+                          className={`object-contain w-full h-full max-h-full max-w-full select-none transition-opacity duration-300 ${
+                            loadedImages[images[carouselIndex]] ? 'opacity-100' : 'opacity-0'
+                          }`}
+                          onLoad={() => markImageAsLoaded(images[carouselIndex])}
                           onError={() => {
                             const url = images[carouselIndex];
                             setBrokenImages(prev => ({ ...prev, [url]: true }));
@@ -504,16 +580,20 @@ function ApprovalContent() {
                         />
                         
                         {/* Hover overlay for desktop & tap indicator for mobile */}
-                        <div className="absolute inset-0 bg-black/0 md:group-hover:bg-black/35 flex items-center justify-center opacity-0 md:group-hover:opacity-100 transition-all duration-200 pointer-events-none">
-                          <span className="hidden md:flex bg-black/75 text-white text-xs px-3 py-1.5 rounded-full font-medium items-center gap-1.5 backdrop-blur-xs">
-                            <Maximize2 className="h-3.5 w-3.5" /> Clique para ampliar
-                          </span>
-                        </div>
+                        {loadedImages[images[carouselIndex]] && (
+                          <>
+                            <div className="absolute inset-0 bg-black/0 md:group-hover:bg-black/35 flex items-center justify-center opacity-0 md:group-hover:opacity-100 transition-all duration-200 pointer-events-none">
+                              <span className="hidden md:flex bg-black/75 text-white text-xs px-3 py-1.5 rounded-full font-medium items-center gap-1.5 backdrop-blur-xs">
+                                <Maximize2 className="h-3.5 w-3.5" /> Clique para ampliar
+                              </span>
+                            </div>
 
-                        {/* Mobile zoom indicator (fixed top right) */}
-                        <div className="absolute top-2.5 right-2.5 bg-black/60 text-white/90 p-1.5 rounded-full backdrop-blur-xs transition-colors pointer-events-none z-10 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-200">
-                          <Maximize2 className="h-3.5 w-3.5" />
-                        </div>
+                            {/* Mobile zoom indicator (fixed top right) */}
+                            <div className="absolute top-2.5 right-2.5 bg-black/60 text-white/90 p-1.5 rounded-full backdrop-blur-xs transition-colors pointer-events-none z-10 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-200">
+                              <Maximize2 className="h-3.5 w-3.5" />
+                            </div>
+                          </>
+                        )}
                       </>
                     )}
                     {isCarousel && (
@@ -727,13 +807,40 @@ function ApprovalContent() {
             className="relative flex items-center justify-center w-full h-full max-w-5xl max-h-[80vh] px-4 md:px-12"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Main Image */}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img 
-              src={images[modalIndex]} 
-              alt={`Post full preview ${modalIndex + 1}`}
-              className="max-w-full max-h-full object-contain rounded-xs select-none animate-in zoom-in-95 duration-200 shadow-2xl"
-            />
+            {brokenImages[images[modalIndex]] ? (
+              <div className="w-full h-full flex flex-col items-center justify-center p-4 text-center bg-card text-muted-foreground gap-2 select-none animate-in fade-in duration-200 max-w-md mx-auto rounded-xl border border-border/40">
+                <AlertCircle className="h-8 w-8 text-warning shrink-0" />
+                <span className="text-sm font-bold text-foreground">Imagem não carregada</span>
+                <span className="text-xs text-muted-foreground/90 max-w-[240px] leading-relaxed">
+                  Não foi possível carregar a mídia no modal. Verifique se o endereço da imagem está correto.
+                </span>
+              </div>
+            ) : (
+              <>
+                {/* Loader inside modal */}
+                {!loadedImages[images[modalIndex]] && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-white/70 gap-3 select-none animate-in fade-in duration-200">
+                    <div className="animate-spin h-8 w-8 border-2 border-primary border-t-transparent rounded-full" />
+                    <span className="text-[11px] font-semibold text-white/50 tracking-wider uppercase">Carregando arte...</span>
+                  </div>
+                )}
+
+                {/* Main Image */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img 
+                  src={images[modalIndex]} 
+                  alt={`Post full preview ${modalIndex + 1}`}
+                  className={`max-w-full max-h-full object-contain rounded-xs select-none transition-opacity duration-300 shadow-2xl ${
+                    loadedImages[images[modalIndex]] ? 'opacity-100' : 'opacity-0'
+                  }`}
+                  onLoad={() => markImageAsLoaded(images[modalIndex])}
+                  onError={() => {
+                    const url = images[modalIndex];
+                    setBrokenImages(prev => ({ ...prev, [url]: true }));
+                  }}
+                />
+              </>
+            )}
 
             {/* Left navigation arrow */}
             {isCarousel && modalIndex > 0 && (
