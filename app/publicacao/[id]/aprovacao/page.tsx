@@ -10,7 +10,11 @@ import {
   MessageSquare, 
   Send, 
   AlertCircle,
-  ExternalLink
+  ExternalLink,
+  X,
+  ChevronLeft,
+  ChevronRight,
+  Maximize2
 } from 'lucide-react';
 import { useStore } from '../../../../lib/store';
 import { useMounted } from '../../../../hooks/useMounted';
@@ -151,6 +155,69 @@ function ApprovalContent() {
 
     return () => clearInterval(timer);
   }, [publication]);
+
+  const images = publication?.images?.length
+    ? publication.images
+    : publication?.imageUrl
+      ? [publication.imageUrl]
+      : [];
+  const isCarousel = publication ? (publication.postType === 'carousel' || images.length > 1) : false;
+  const channels = publication?.channels?.length
+    ? publication.channels
+    : (publication?.platform ? [publication.platform] : ['instagram']);
+
+  // Lightbox / Modal States & Logic
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalIndex, setModalIndex] = useState(0);
+
+  const openModal = () => {
+    if (images.length > 0 && !brokenImages[images[carouselIndex]]) {
+      setModalIndex(carouselIndex);
+      setIsModalOpen(true);
+    }
+  };
+
+  const closeModal = () => {
+    setIsModalOpen(false);
+    setCarouselIndex(modalIndex);
+  };
+
+  const handlePrevModalImage = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (modalIndex > 0) {
+      setModalIndex(prev => prev - 1);
+    }
+  };
+
+  const handleNextModalImage = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (modalIndex < images.length - 1) {
+      setModalIndex(prev => prev + 1);
+    }
+  };
+
+  useEffect(() => {
+    if (!isModalOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsModalOpen(false);
+        setCarouselIndex(modalIndex);
+      } else if (e.key === 'ArrowLeft' && isCarousel && modalIndex > 0) {
+        setModalIndex(prev => prev - 1);
+      } else if (e.key === 'ArrowRight' && isCarousel && modalIndex < images.length - 1) {
+        setModalIndex(prev => prev + 1);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = '';
+    };
+  }, [isModalOpen, modalIndex, isCarousel, images.length]);
 
   if (!mounted) return null;
 
@@ -350,15 +417,7 @@ function ApprovalContent() {
     );
   }
 
-  const images = publication.images?.length
-    ? publication.images
-    : publication.imageUrl
-      ? [publication.imageUrl]
-      : [];
-  const isCarousel = publication.postType === 'carousel' || images.length > 1;
-  const channels = publication.channels?.length
-    ? publication.channels
-    : (publication.platform ? [publication.platform] : ['instagram']);
+
 
   return (
     <div className="min-h-screen bg-background text-foreground py-8 px-4 sm:px-6 lg:px-8 flex flex-col justify-between">
@@ -408,7 +467,10 @@ function ApprovalContent() {
               </div>
               
               {/* Image box */}
-              <div className="aspect-square bg-background/50 flex items-center justify-center overflow-hidden relative border-b border-border/20">
+              <div 
+                onClick={openModal}
+                className="aspect-square bg-zinc-950 flex items-center justify-center overflow-hidden relative border-b border-border/20 cursor-pointer group"
+              >
                 {images.length > 0 ? (
                   <>
                     {brokenImages[images[carouselIndex]] ? (
@@ -423,32 +485,50 @@ function ApprovalContent() {
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-xs text-primary font-bold hover:underline mt-1 cursor-pointer flex items-center gap-0.5"
+                          onClick={(e) => e.stopPropagation()}
                         >
                           Abrir link original <ExternalLink className="h-3 w-3" />
                         </a>
                       </div>
                     ) : (
-                      /* eslint-disable-next-line @next/next/no-img-element */
-                      <img 
-                        src={images[carouselIndex]} 
-                        alt={`Post preview creative ${carouselIndex + 1}`} 
-                        className="object-cover w-full h-full"
-                        onError={() => {
-                          const url = images[carouselIndex];
-                          setBrokenImages(prev => ({ ...prev, [url]: true }));
-                        }}
-                      />
+                      <>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img 
+                          src={images[carouselIndex]} 
+                          alt={`Post preview creative ${carouselIndex + 1}`} 
+                          className="object-contain w-full h-full max-h-full max-w-full select-none"
+                          onError={() => {
+                            const url = images[carouselIndex];
+                            setBrokenImages(prev => ({ ...prev, [url]: true }));
+                          }}
+                        />
+                        
+                        {/* Hover overlay for desktop & tap indicator for mobile */}
+                        <div className="absolute inset-0 bg-black/0 md:group-hover:bg-black/35 flex items-center justify-center opacity-0 md:group-hover:opacity-100 transition-all duration-200 pointer-events-none">
+                          <span className="hidden md:flex bg-black/75 text-white text-xs px-3 py-1.5 rounded-full font-medium items-center gap-1.5 backdrop-blur-xs">
+                            <Maximize2 className="h-3.5 w-3.5" /> Clique para ampliar
+                          </span>
+                        </div>
+
+                        {/* Mobile zoom indicator (fixed top right) */}
+                        <div className="absolute top-2.5 right-2.5 bg-black/60 text-white/90 p-1.5 rounded-full backdrop-blur-xs transition-colors pointer-events-none z-10 md:opacity-0 md:group-hover:opacity-100 transition-opacity duration-200">
+                          <Maximize2 className="h-3.5 w-3.5" />
+                        </div>
+                      </>
                     )}
                     {isCarousel && (
                       <>
-                        <div className="absolute bottom-2.5 left-2.5 bg-black/60 px-2 py-0.5 rounded text-[10px] text-white font-semibold">
+                        <div className="absolute bottom-2.5 left-2.5 bg-black/60 px-2 py-0.5 rounded text-[10px] text-white font-semibold z-10">
                           {carouselIndex + 1} / {images.length}
                         </div>
                         {carouselIndex > 0 && (
                           <button
                             type="button"
-                            onClick={() => setCarouselIndex(prev => prev - 1)}
-                            className="absolute left-2 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/75 text-white h-7 w-7 rounded-full flex items-center justify-center font-bold text-xs cursor-pointer select-none"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setCarouselIndex(prev => prev - 1);
+                            }}
+                            className="absolute left-2 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/75 text-white h-7 w-7 rounded-full flex items-center justify-center font-bold text-xs cursor-pointer select-none z-10 focus:outline-none focus:ring-2 focus:ring-white/40"
                           >
                             &lt;
                           </button>
@@ -456,8 +536,11 @@ function ApprovalContent() {
                         {carouselIndex < images.length - 1 && (
                           <button
                             type="button"
-                            onClick={() => setCarouselIndex(prev => prev + 1)}
-                            className="absolute right-2 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/75 text-white h-7 w-7 rounded-full flex items-center justify-center font-bold text-xs cursor-pointer select-none"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setCarouselIndex(prev => prev + 1);
+                            }}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/75 text-white h-7 w-7 rounded-full flex items-center justify-center font-bold text-xs cursor-pointer select-none z-10 focus:outline-none focus:ring-2 focus:ring-white/40"
                           >
                             &gt;
                           </button>
@@ -476,7 +559,10 @@ function ApprovalContent() {
                     <button
                       key={i}
                       type="button"
-                      onClick={() => setCarouselIndex(i)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setCarouselIndex(i);
+                      }}
                       className={`h-1.5 w-1.5 rounded-full transition-all cursor-pointer ${
                         i === carouselIndex ? 'bg-primary w-3' : 'bg-muted-foreground/35 hover:bg-muted-foreground/50'
                       }`}
@@ -616,6 +702,90 @@ function ApprovalContent() {
           &copy; {new Date().getFullYear()} NV Hub. Todos os direitos reservados.
         </p>
       </footer>
+
+      {/* Lightbox / Modal */}
+      {isModalOpen && (
+        <div 
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/90 backdrop-blur-xs select-none animate-in fade-in duration-200"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Visualização da imagem em tamanho cheio"
+          onClick={closeModal}
+        >
+          {/* Close button at the top right */}
+          <button
+            type="button"
+            onClick={closeModal}
+            className="absolute top-4 right-4 text-white/70 hover:text-white bg-white/10 hover:bg-white/20 p-2 rounded-full transition-colors cursor-pointer z-50 focus:outline-none focus:ring-2 focus:ring-white/40"
+            aria-label="Fechar visualização"
+          >
+            <X className="h-6 w-6" />
+          </button>
+
+          {/* Modal content container */}
+          <div 
+            className="relative flex items-center justify-center w-full h-full max-w-5xl max-h-[80vh] px-4 md:px-12"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Main Image */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img 
+              src={images[modalIndex]} 
+              alt={`Post full preview ${modalIndex + 1}`}
+              className="max-w-full max-h-full object-contain rounded-xs select-none animate-in zoom-in-95 duration-200 shadow-2xl"
+            />
+
+            {/* Left navigation arrow */}
+            {isCarousel && modalIndex > 0 && (
+              <button
+                type="button"
+                onClick={handlePrevModalImage}
+                className="absolute left-2 md:left-4 top-1/2 -translate-y-1/2 bg-black/60 hover:bg-black/80 text-white hover:scale-105 active:scale-95 h-12 w-12 rounded-full flex items-center justify-center transition-all cursor-pointer z-10 focus:outline-none focus:ring-2 focus:ring-white/40"
+                aria-label="Imagem anterior"
+              >
+                <ChevronLeft className="h-8 w-8" />
+              </button>
+            )}
+
+            {/* Right navigation arrow */}
+            {isCarousel && modalIndex < images.length - 1 && (
+              <button
+                type="button"
+                onClick={handleNextModalImage}
+                className="absolute right-2 md:right-4 top-1/2 -translate-y-1/2 bg-black/60 hover:bg-black/80 text-white hover:scale-105 active:scale-95 h-12 w-12 rounded-full flex items-center justify-center transition-all cursor-pointer z-10 focus:outline-none focus:ring-2 focus:ring-white/40"
+                aria-label="Próxima imagem"
+              >
+                <ChevronRight className="h-8 w-8" />
+              </button>
+            )}
+          </div>
+
+          {/* Carousel dots and indicator below image inside modal */}
+          {isCarousel && (
+            <div className="mt-4 flex flex-col items-center gap-2 z-10">
+              <span className="text-white/80 text-xs font-semibold bg-black/40 px-2.5 py-1 rounded-full">
+                {modalIndex + 1} / {images.length}
+              </span>
+              <div className="flex justify-center gap-1.5">
+                {images.map((_, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setModalIndex(i);
+                    }}
+                    className={`h-1.5 w-1.5 rounded-full transition-all cursor-pointer ${
+                      i === modalIndex ? 'bg-primary w-3' : 'bg-white/30 hover:bg-white/50'
+                    }`}
+                    aria-label={`Ir para imagem ${i + 1}`}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
