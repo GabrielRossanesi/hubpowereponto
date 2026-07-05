@@ -7,6 +7,16 @@ import crypto from 'crypto';
 import type { Publication } from '../../types';
 import { Publication as PrismaPublication } from '@prisma/client';
 
+function generateShortToken(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let randomCode = '';
+  const bytes = crypto.randomBytes(12);
+  for (let i = 0; i < 12; i++) {
+    randomCode += chars[bytes[i] % chars.length];
+  }
+  return `approval_${Date.now().toString(36)}_${randomCode}`;
+}
+
 // Helper to map DB Publication to frontend Publication shape
 function mapDbPubToPub(dbPub: PrismaPublication): Publication {
   let imagesArr: string[] = [];
@@ -42,7 +52,7 @@ function mapDbPubToPub(dbPub: PrismaPublication): Publication {
     channelsArr = [dbPub.platform];
   }
 
-  const approvalLink = `/publicacao/${dbPub.id}/aprovacao?token=${dbPub.approvalToken}`;
+  const approvalLink = `/a/${dbPub.approvalToken}`;
 
   // Consider it expired after 24h
   let expiresAt = new Date(new Date(dbPub.createdAt).getTime() + 24 * 60 * 60 * 1000).toISOString();
@@ -51,8 +61,18 @@ function mapDbPubToPub(dbPub: PrismaPublication): Publication {
   if (dbPub.approvalToken && dbPub.approvalToken.startsWith('approval_')) {
     const parts = dbPub.approvalToken.split('_');
     if (parts.length >= 2) {
-      const timestamp = parseInt(parts[1], 10);
-      if (!isNaN(timestamp)) {
+      const rawPart = parts[1];
+      let timestamp = parseInt(rawPart, 36);
+      
+      const minTimestamp = 1577836800000; // 2020-01-01
+      const maxTimestamp = 4102444800000; // 2100-01-01
+      
+      if (isNaN(timestamp) || timestamp < minTimestamp || timestamp > maxTimestamp) {
+        // Fallback to base10 (old format)
+        timestamp = parseInt(rawPart, 10);
+      }
+
+      if (!isNaN(timestamp) && timestamp >= minTimestamp && timestamp <= maxTimestamp) {
         expiresAt = new Date(timestamp + 24 * 60 * 60 * 1000).toISOString();
       }
     }
@@ -136,7 +156,7 @@ export async function createRealPublication(data: {
     const activeOrgId = await getActiveOrganizationId();
     await validateTenantAccess(activeOrgId);
 
-    const token = crypto.randomUUID();
+    const token = generateShortToken();
 
     const firstPlatform = data.platform || (data.channels && data.channels.length > 0 ? data.channels[0] : 'instagram');
     const finalChannels = data.channels && data.channels.length > 0 ? data.channels : [firstPlatform];
@@ -533,7 +553,7 @@ export async function regeneratePublicationApprovalLinkAction(
       return { success: false, error: 'Não autorizado: Publicação pertence a outro inquilino.' };
     }
 
-    const token = `approval_${Date.now()}_${crypto.randomUUID()}`;
+    const token = generateShortToken();
 
     const updatedDbPub = await prisma.publication.update({
       where: { id: publicationId },

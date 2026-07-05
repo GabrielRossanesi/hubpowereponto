@@ -78,7 +78,7 @@ function ApprovalContent() {
   const mounted = useMounted();
   
   const publicationId = params.id as string;
-  const token = searchParams.get('token') || '';
+  const token = (params.token as string) || searchParams.get('token') || '';
 
   const { 
     publications, 
@@ -124,7 +124,12 @@ function ApprovalContent() {
   }, [token]);
   
   // Find publication
-  const publication = isDatabaseDataMode ? dbPub : publications.find(p => p.id === publicationId);
+  const publication = isDatabaseDataMode
+    ? dbPub
+    : (token
+        ? publications.find(p => p.approvalToken === token)
+        : (publicationId ? publications.find(p => p.id === publicationId) : undefined)
+      );
 
   // Time remaining state
   const [timeLeft, setTimeLeft] = useState<string>('');

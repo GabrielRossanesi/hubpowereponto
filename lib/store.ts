@@ -2987,9 +2987,22 @@ export const useStore = create<SystemState>()(
       },
 
       createPublicationApprovalLink: (publicationId) => {
-        const token = `approval_${Math.random().toString(36).substring(2, 15)}`;
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+        let randomCode = '';
+        if (typeof window !== 'undefined' && window.crypto && typeof window.crypto.getRandomValues === 'function') {
+          const array = new Uint8Array(12);
+          window.crypto.getRandomValues(array);
+          for (let i = 0; i < 12; i++) {
+            randomCode += chars[array[i] % chars.length];
+          }
+        } else {
+          for (let i = 0; i < 12; i++) {
+            randomCode += chars[Math.floor(Math.random() * chars.length)];
+          }
+        }
+        const token = `approval_${Date.now().toString(36)}_${randomCode}`;
         const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
-        const approvalLink = `${origin}/publicacao/${publicationId}/aprovacao?token=${token}`;
+        const approvalLink = `${origin}/a/${token}`;
         
         set((state) => ({
           publications: state.publications.map((pub) =>
