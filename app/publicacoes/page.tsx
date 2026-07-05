@@ -30,7 +30,7 @@ import EmptyState from '../../components/ui/empty-state';
 import DatePicker from '../../components/ui/date-picker';
 import { isDatabaseDataMode } from '../../lib/data-mode';
 import { getClients, getTenantMembers } from '../clientes/actions';
-import { getRealPublications, createRealPublication, archivePublication, restorePublication, updatePublicationAction } from './actions';
+import { getRealPublications, createRealPublication, archivePublication, restorePublication, updatePublicationAction, regeneratePublicationApprovalLinkAction } from './actions';
 import type { Client, Publication } from '../../types';
 import { useCallback } from 'react';
 
@@ -212,6 +212,59 @@ export default function PublicacoesPage() {
   
   // Clipboard copy feedback state
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Loading states for link generation
+  const [loadingLinks, setLoadingLinks] = useState<Record<string, boolean>>({});
+
+  const handleCreateApprovalLink = async (pubId: string) => {
+    if (loadingLinks[pubId]) return;
+    setLoadingLinks(prev => ({ ...prev, [pubId]: true }));
+    try {
+      if (isDatabaseMode) {
+        const res = await regeneratePublicationApprovalLinkAction(pubId);
+        if (res.success && res.data) {
+          setDbPublications(prev => prev.map(p => p.id === pubId ? res.data! : p));
+          updateStorePublication(pubId, res.data);
+          alert('Link de aprovação gerado com sucesso.');
+        } else {
+          alert(res.error || 'Não foi possível gerar um novo link. Tente novamente.');
+        }
+      } else {
+        createPublicationApprovalLink(pubId);
+        alert('Link de aprovação gerado com sucesso.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Não foi possível gerar um novo link. Tente novamente.');
+    } finally {
+      setLoadingLinks(prev => ({ ...prev, [pubId]: false }));
+    }
+  };
+
+  const handleRegenerateApprovalLink = async (pubId: string) => {
+    if (loadingLinks[pubId]) return;
+    setLoadingLinks(prev => ({ ...prev, [pubId]: true }));
+    try {
+      if (isDatabaseMode) {
+        const res = await regeneratePublicationApprovalLinkAction(pubId);
+        if (res.success && res.data) {
+          setDbPublications(prev => prev.map(p => p.id === pubId ? res.data! : p));
+          updateStorePublication(pubId, res.data);
+          alert('Novo link de aprovação gerado com sucesso.');
+        } else {
+          alert(res.error || 'Não foi possível gerar um novo link. Tente novamente.');
+        }
+      } else {
+        regeneratePublicationApprovalLink(pubId);
+        alert('Novo link de aprovação gerado com sucesso.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Não foi possível gerar um novo link. Tente novamente.');
+    } finally {
+      setLoadingLinks(prev => ({ ...prev, [pubId]: false }));
+    }
+  };
 
 
 
@@ -790,9 +843,15 @@ export default function PublicacoesPage() {
                         size="sm"
                         variant="outline"
                         className="w-full text-xs h-8.5 gap-1.5 justify-center hover:bg-muted"
-                        onClick={() => regeneratePublicationApprovalLink(pub.id)}
+                        onClick={() => handleRegenerateApprovalLink(pub.id)}
+                        disabled={loadingLinks[pub.id]}
                       >
-                        <RefreshCw className="h-3.5 w-3.5" /> Gerar Novo Link após Ajuste
+                        {loadingLinks[pub.id] ? (
+                          <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-3.5 w-3.5" />
+                        )}
+                        {loadingLinks[pub.id] ? 'Gerando...' : 'Gerar Novo Link após Ajuste'}
                       </Button>
                     </div>
                   ) : !pub.approvalToken || pub.approvalLinkStatus === 'not_created' ? (
@@ -803,9 +862,15 @@ export default function PublicacoesPage() {
                       <Button 
                         size="sm"
                         className="w-full text-xs h-8.5 gap-1.5 justify-center"
-                        onClick={() => createPublicationApprovalLink(pub.id)}
+                        onClick={() => handleCreateApprovalLink(pub.id)}
+                        disabled={loadingLinks[pub.id]}
                       >
-                        <LinkIcon className="h-3.5 w-3.5" /> Criar link de aprovação
+                        {loadingLinks[pub.id] ? (
+                          <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <LinkIcon className="h-3.5 w-3.5" />
+                        )}
+                        {loadingLinks[pub.id] ? 'Criando...' : 'Criar link de aprovação'}
                       </Button>
                     </div>
                   ) : pub.approvalLinkStatus === 'active' ? (
@@ -818,9 +883,15 @@ export default function PublicacoesPage() {
                           size="sm"
                           variant="outline"
                           className="w-full text-xs h-8.5 gap-1.5 justify-center"
-                          onClick={() => regeneratePublicationApprovalLink(pub.id)}
+                          onClick={() => handleRegenerateApprovalLink(pub.id)}
+                          disabled={loadingLinks[pub.id]}
                         >
-                          <RefreshCw className="h-3.5 w-3.5" /> Gerar Novo Link
+                          {loadingLinks[pub.id] ? (
+                            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <RefreshCw className="h-3.5 w-3.5" />
+                          )}
+                          {loadingLinks[pub.id] ? 'Gerando...' : 'Gerar Novo Link'}
                         </Button>
                       </div>
                     ) : (

@@ -45,7 +45,18 @@ function mapDbPubToPub(dbPub: PrismaPublication): Publication {
   const approvalLink = `/publicacao/${dbPub.id}/aprovacao?token=${dbPub.approvalToken}`;
 
   // Consider it expired after 24h
-  const expiresAt = new Date(new Date(dbPub.createdAt).getTime() + 24 * 60 * 60 * 1000).toISOString();
+  let expiresAt = new Date(new Date(dbPub.createdAt).getTime() + 24 * 60 * 60 * 1000).toISOString();
+
+  // Try to parse the creation timestamp encoded in the token (format: approval_TIMESTAMP_RANDOM)
+  if (dbPub.approvalToken && dbPub.approvalToken.startsWith('approval_')) {
+    const parts = dbPub.approvalToken.split('_');
+    if (parts.length >= 2) {
+      const timestamp = parseInt(parts[1], 10);
+      if (!isNaN(timestamp)) {
+        expiresAt = new Date(timestamp + 24 * 60 * 60 * 1000).toISOString();
+      }
+    }
+  }
 
   return {
     id: dbPub.id,
@@ -493,3 +504,59 @@ export async function updatePublicationAction(
     return { success: false, error: errMsg };
   }
 }
+
+export async function regeneratePublicationApprovalLinkAction(
+  publicationId: string
+): Promise<{ success: boolean; data?: Publication; error?: string }> {
+  if (!isDatabaseDataMode) {
+    return { success: false, error: 'Database mode not active.' };
+  }
+
+  try {
+    const session = await getSession();
+    if (!session) {
+      return { success: false, error: 'Não autorizado: Sessão não encontrada.' };
+    }
+
+    const activeOrgId = await getActiveOrganizationId(session);
+    await validateTenantAccess(activeOrgId);
+
+    const dbPub = await prisma.publication.findUnique({
+      where: { id: publicationId }
+    });
+
+    if (!dbPub) {
+      return { success: false, error: 'Publicação não encontrada.' };
+    }
+
+    if (dbPub.organizationId !== activeOrgId) {
+      return { success: false, error: 'Não autorizado: Publicação pertence a outro inquilino.' };
+    }
+
+    const token = `approval_${Date.now()}_${crypto.randomUUID()}`;
+
+    const updatedDbPub = await prisma.publication.update({
+      where: { id: publicationId },
+      data: {
+        approvalToken: token,
+      }
+    });
+
+    // Write audit log
+    await prisma.auditLog.create({
+      data: {
+        organizationId: activeOrgId,
+        action: `PUBLICATION_APPROVAL_LINK_REGENERATED: ${updatedDbPub.companyName}`,
+        userId: session.user.id,
+        target: updatedDbPub.id
+      }
+    });
+
+    return { success: true, data: mapDbPubToPub(updatedDbPub) };
+  } catch (err: unknown) {
+    console.error('Error regenerating publication approval link:', err);
+    const errMsg = err instanceof Error ? err.message : 'Erro ao regenerar link.';
+    return { success: false, error: errMsg };
+  }
+}
+
