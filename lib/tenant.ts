@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import { headers } from 'next/headers';
 import prisma from './prisma';
 import { auth } from './auth';
@@ -25,6 +26,12 @@ export interface TenantMembership {
   role: 'owner' | 'admin' | 'member' | 'viewer';
   organizationId: string;
   userId: string;
+  /**
+   * true quando o acesso NÃO veio de um Member real, mas do bypass de operador
+   * de plataforma (simulação). Callers de telas de tenant devem tratar isso como
+   * "operador simulando" — nunca como membership genuína — e marcar o AuditLog.
+   */
+  viaOperatorBypass?: boolean;
 }
 
 const isDatabaseMode = isDatabaseDataMode;
@@ -32,7 +39,7 @@ const isDatabaseMode = isDatabaseDataMode;
 /**
  * Gets the active session from Better Auth (or a mock session in sandbox mode).
  */
-export async function getSession(): Promise<TenantSession | null> {
+export const getSession = cache(async (): Promise<TenantSession | null> => {
   if (!isDatabaseMode) {
     // Sandbox mode mock session (Operator by default to allow demo navigations)
     return {
@@ -85,13 +92,13 @@ export async function getSession(): Promise<TenantSession | null> {
     console.error('Error fetching Better Auth session:', error);
     return null;
   }
-}
+});
 
 /**
  * Validates that the logged-in user belongs to the requested organization.
  * Throws an error or returns membership if successful.
  */
-export async function validateTenantAccess(organizationId: string): Promise<TenantMembership> {
+export const validateTenantAccess = cache(async (organizationId: string): Promise<TenantMembership> => {
   const session = await getSession();
   
   if (!session) {
@@ -134,11 +141,14 @@ export async function validateTenantAccess(organizationId: string): Promise<Tena
       throw new Error('Forbidden: User is not a member of this organization.');
     }
 
+    // Operador de plataforma acessando um tenant do qual NÃO é membro: simulação.
+    // Marcado com viaOperatorBypass para o AuditLog distinguir de ação de membro real.
     return {
       id: 'membership_operator_bypass_id',
       role: 'owner',
       organizationId,
       userId: session.user.id,
+      viaOperatorBypass: true,
     };
   }
 
@@ -156,9 +166,9 @@ export async function validateTenantAccess(organizationId: string): Promise<Tena
     organizationId: member.organizationId,
     userId: member.userId,
   };
-}
+});
 
-export async function isOperator(): Promise<boolean> {
+export const isOperator = cache(async (): Promise<boolean> => {
   const session = await getSession();
   if (!session) return false;
 
@@ -170,12 +180,46 @@ export async function isOperator(): Promise<boolean> {
   });
 
   return user?.platformRole === 'operator' || user?.platformRole === 'platform_admin';
-}
+});
+
+/**
+ * Valida acesso de OPERADOR DE PLATAFORMA (painel /empresas e afins).
+ *
+ * Use este helper — e não `validateTenantAccess` — quando a ação é legitimamente
+ * cross-tenant (administração da plataforma). Assim o bypass de operador fica
+ * restrito ao seu lugar próprio e as telas normais de tenant não dependem dele.
+ * Lança erro se a sessão não for de um operador/platform_admin.
+ */
+export const validatePlatformOperatorAccess = cache(async (): Promise<TenantSession> => {
+  const session = await getSession();
+  if (!session) {
+    throw new Error('Unauthorized: Session not found.');
+  }
+
+  if (!isDatabaseMode) {
+    // Sandbox: operador por padrão (demo).
+    return session;
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: { platformRole: true },
+  });
+
+  const isPlatformOperator = user?.platformRole === 'operator' || user?.platformRole === 'platform_admin';
+  if (!isPlatformOperator) {
+    throw new Error('Forbidden: Ação restrita a operadores da plataforma.');
+  }
+
+  return session;
+});
 
 /**
  * Resolves the active organization ID for the user's session, setting it automatically if missing.
+ * Memoizado por request (chave = objeto de sessão, estável via getSession cacheado),
+ * evitando repetir as queries de resolução Vercel -> Railway na mesma renderização.
  */
-export async function getOrResolveActiveOrganizationId(session: TenantSession): Promise<string> {
+export const getOrResolveActiveOrganizationId = cache(async (session: TenantSession): Promise<string> => {
   if (!isDatabaseMode) {
     return 'org_hub_power';
   }
@@ -261,13 +305,15 @@ export async function getOrResolveActiveOrganizationId(session: TenantSession): 
   }
 
   throw new Error('Usuário não está vinculado a nenhuma organização ativa.');
-}
+});
 
 /**
  * Resolves the active organization ID from the session, auto-setting it if missing.
  * Throws an Error if no valid active organization is found.
+ * Memoizado por request: chamadas sem argumento (caso comum nas actions) colapsam
+ * numa única resolução; a resolução em si também é memoizada pela sessão.
  */
-export async function getActiveOrganizationId(providedSession?: TenantSession | null): Promise<string> {
+export const getActiveOrganizationId = cache(async (providedSession?: TenantSession | null): Promise<string> => {
   if (!isDatabaseMode) {
     return 'org_hub_power';
   }
@@ -278,4 +324,4 @@ export async function getActiveOrganizationId(providedSession?: TenantSession | 
   }
 
   return getOrResolveActiveOrganizationId(session);
-}
+});

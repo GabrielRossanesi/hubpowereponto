@@ -1,5 +1,11 @@
 'use client';
 
+// ⚠️ DÍVIDA TÉCNICA — módulo de PROPOSTAS ainda NÃO migrado para o banco real.
+// Esta página lê exclusivamente do store Zustand (mock/sandbox), independentemente
+// do data-mode. NÃO é bug de produção: propostas/financeiro seguem em fase de
+// estruturação. Ao migrar, seguir o padrão de publicações (Server Component +
+// server actions com escopo de tenant). Ver task.md.
+
 import React, { useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';

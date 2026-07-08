@@ -192,6 +192,37 @@ export interface Publication {
   channels?: string[];
 }
 
+/**
+ * DTO exposto na rota PÚBLICA de aprovação (sem login), servido por
+ * `getPublicationByApprovalToken`. Contém apenas o mínimo necessário para
+ * renderizar a tela de aprovação do cliente externo.
+ *
+ * NÃO deve conter dados internos: organizationId, clientId, clientName,
+ * responsibleUser, metadados de arquivo (imageFileName/imageMimeType/imageSize),
+ * archivedBy ou imageSource. Ver auditoria de segurança (rota pública).
+ */
+export interface PublicApprovalPublication {
+  id: string;
+  companyName: string;
+  caption: string;
+  scheduledDate: string;
+  status: PublicationStatus;
+  approvalToken: string;
+  approvalLink: string;
+  approvalLinkStatus?: 'not_created' | 'active' | 'expired' | 'approved' | 'changes_requested';
+  approvalLinkExpiresAt?: string;
+  clientComments?: string;
+  clientFeedback?: string;
+  approvedAt?: string;
+  changesRequestedAt?: string;
+  platform?: 'instagram' | 'facebook' | 'linkedin' | 'tiktok' | 'google_business' | 'other';
+  postType?: 'single_image' | 'carousel';
+  images?: string[];
+  imageUrl?: string;
+  channels?: string[];
+  archivedAt?: string;
+}
+
 export type TaskStatus = 'pending' | 'in_progress' | 'in_review' | 'completed' | 'overdue' | 'cancelled' | 'archived';
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 
