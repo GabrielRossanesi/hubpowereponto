@@ -3,9 +3,133 @@
 import prisma from '../../lib/prisma';
 import { getActiveOrganizationId, validateTenantAccess, getSession } from '../../lib/tenant';
 import { isDatabaseDataMode } from '../../lib/data-mode';
+import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import crypto from 'crypto';
-import type { Publication } from '../../types';
+import type { Publication, PublicApprovalPublication } from '../../types';
 import { Publication as PrismaPublication } from '@prisma/client';
+
+// Colunas seguras para servir na rota pública de aprovação (sem login).
+// Mantém a lista explícita para nunca vazar organizationId, clientId,
+// clientName, responsibleUser, metadados de arquivo, archivedBy, etc.
+const PUBLIC_APPROVAL_SELECT = {
+  id: true,
+  companyName: true,
+  caption: true,
+  scheduledDate: true,
+  status: true,
+  approvalToken: true,
+  clientComments: true,
+  platform: true,
+  postType: true,
+  images: true,
+  imageUrl: true,
+  channels: true,
+  archivedAt: true,
+  createdAt: true,
+} as const;
+
+type PublicApprovalRow = Pick<
+  PrismaPublication,
+  'id' | 'companyName' | 'caption' | 'scheduledDate' | 'status' | 'approvalToken'
+  | 'clientComments' | 'platform' | 'postType' | 'images' | 'imageUrl' | 'channels'
+  | 'archivedAt' | 'createdAt'
+>;
+
+function parseJsonStringArray(value: PrismaPublication['images']): string[] {
+  if (!value) return [];
+  try {
+    if (typeof value === 'string') return JSON.parse(value) as string[];
+    if (Array.isArray(value)) return value as string[];
+  } catch (e) {
+    console.error('Error parsing JSON array:', e);
+  }
+  return [];
+}
+
+function computeApprovalExpiry(dbPub: Pick<PrismaPublication, 'approvalToken' | 'createdAt'>): string {
+  let expiresAt = new Date(new Date(dbPub.createdAt).getTime() + 24 * 60 * 60 * 1000).toISOString();
+  if (dbPub.approvalToken && dbPub.approvalToken.startsWith('approval_')) {
+    const parts = dbPub.approvalToken.split('_');
+    if (parts.length >= 2) {
+      const rawPart = parts[1];
+      let timestamp = parseInt(rawPart, 36);
+      const minTimestamp = 1577836800000; // 2020-01-01
+      const maxTimestamp = 4102444800000; // 2100-01-01
+      if (isNaN(timestamp) || timestamp < minTimestamp || timestamp > maxTimestamp) {
+        timestamp = parseInt(rawPart, 10);
+      }
+      if (!isNaN(timestamp) && timestamp >= minTimestamp && timestamp <= maxTimestamp) {
+        expiresAt = new Date(timestamp + 24 * 60 * 60 * 1000).toISOString();
+      }
+    }
+  }
+  return expiresAt;
+}
+
+// Mapeia uma linha (com colunas restritas) para o DTO público. Só recebe o que
+// já foi selecionado com PUBLIC_APPROVAL_SELECT, então não há risco de vazar
+// campos internos por engano.
+function mapRowToPublicApproval(dbPub: PublicApprovalRow): PublicApprovalPublication {
+  let imagesArr = parseJsonStringArray(dbPub.images);
+  if (imagesArr.length === 0 && dbPub.imageUrl) {
+    imagesArr = [dbPub.imageUrl];
+  }
+
+  let channelsArr = parseJsonStringArray(dbPub.channels);
+  if (channelsArr.length === 0 && dbPub.platform) {
+    channelsArr = [dbPub.platform];
+  }
+
+  return {
+    id: dbPub.id,
+    companyName: dbPub.companyName || '',
+    caption: dbPub.caption || '',
+    scheduledDate: dbPub.scheduledDate || '',
+    status: (dbPub.status || 'pending_approval') as PublicApprovalPublication['status'],
+    approvalToken: dbPub.approvalToken,
+    approvalLink: `/a/${dbPub.approvalToken}`,
+    approvalLinkStatus: dbPub.status === 'approved'
+      ? 'approved'
+      : (dbPub.status === 'changes_requested' ? 'changes_requested' : 'active'),
+    approvalLinkExpiresAt: computeApprovalExpiry(dbPub),
+    clientComments: dbPub.clientComments || undefined,
+    platform: (dbPub.platform || 'instagram') as PublicApprovalPublication['platform'],
+    postType: (dbPub.postType || 'single_image') as 'single_image' | 'carousel',
+    images: imagesArr,
+    imageUrl: dbPub.imageUrl || '',
+    channels: channelsArr,
+    archivedAt: dbPub.archivedAt ? dbPub.archivedAt.toISOString() : undefined,
+  };
+}
+
+// Prefixa a ação de auditoria quando ela foi executada por um operador de
+// plataforma simulando o tenant (bypass), para não se confundir com ação de
+// um membro real da organização.
+function auditAction(base: string, membership?: { viaOperatorBypass?: boolean }): string {
+  return membership?.viaOperatorBypass ? `[SIMULACAO_OPERADOR] ${base}` : base;
+}
+
+// Resolve um userId (FK obrigatória do AuditLog) para ancorar uma ação vinda do
+// LINK PÚBLICO (cliente externo, sem conta). Prioriza o responsável real da
+// publicação; só cai para o primeiro membro se não resolver. A ação em si é
+// sempre marcada como externa (ver PUBLIC_APPROVAL_* abaixo), então nunca fica
+// atribuída silenciosamente a um membro arbitrário como se fosse ele o autor.
+// NOTA: o ideal a longo prazo é userId nullable + um usuário "system" dedicado
+// (exige migration); ver task.md.
+async function resolvePublicAuditUserId(organizationId: string, responsibleUser?: string | null): Promise<string | null> {
+  if (responsibleUser) {
+    const responsible = await prisma.user.findFirst({
+      where: { name: responsibleUser, memberships: { some: { organizationId } } },
+      select: { id: true },
+    });
+    if (responsible) return responsible.id;
+  }
+  const firstMember = await prisma.member.findFirst({
+    where: { organizationId },
+    select: { userId: true },
+  });
+  return firstMember?.userId ?? null;
+}
 
 function generateShortToken(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -154,7 +278,7 @@ export async function createRealPublication(data: {
 
   try {
     const activeOrgId = await getActiveOrganizationId();
-    await validateTenantAccess(activeOrgId);
+    const membership = await validateTenantAccess(activeOrgId);
 
     const token = generateShortToken();
 
@@ -191,7 +315,7 @@ export async function createRealPublication(data: {
       await prisma.auditLog.create({
         data: {
           organizationId: activeOrgId,
-          action: `PUBLICATION_CREATED: ${data.companyName} (${data.platform})`,
+          action: auditAction(`PUBLICATION_CREATED: ${data.companyName} (${data.platform})`, membership),
           userId: userId,
           target: dbPub.id,
         },
@@ -206,16 +330,30 @@ export async function createRealPublication(data: {
   }
 }
 
-export async function getPublicationByApprovalToken(token: string): Promise<Publication | null> {
+export async function getPublicationByApprovalToken(token: string): Promise<PublicApprovalPublication | null> {
+  // Rota pública, sem sessão: gate é exclusivamente o token não-adivinhável.
+  if (!token) return null;
+
+  // Rate limit por IP: alto o bastante para não atrapalhar reload/countdown do
+  // cliente legítimo, mas corta varredura automatizada. Excedido -> null (some).
+  const ip = await getClientIp();
+  const readLimit = checkRateLimit(`pub_read:${ip}`, 60, 60_000);
+  if (!readLimit.allowed) {
+    console.warn(`Rate limit exceeded (public read) for ip=${ip}`);
+    return null;
+  }
+
   try {
     const dbPub = await prisma.publication.findUnique({
       where: {
         approvalToken: token,
       },
+      // select explícito -> só campos seguros chegam ao browser do cliente externo.
+      select: PUBLIC_APPROVAL_SELECT,
     });
 
     if (!dbPub) return null;
-    return mapDbPubToPub(dbPub);
+    return mapRowToPublicApproval(dbPub);
   } catch (err) {
     console.error('Error fetching public publication by token:', err);
     return null;
@@ -223,6 +361,13 @@ export async function getPublicationByApprovalToken(token: string): Promise<Publ
 }
 
 export async function approvePublicationByTokenAction(token: string): Promise<{ success: boolean; error?: string }> {
+  // Rate limit mais estrito nas mutações públicas.
+  const ip = await getClientIp();
+  const limit = checkRateLimit(`pub_mutate:${ip}`, 10, 60_000);
+  if (!limit.allowed) {
+    return { success: false, error: `Muitas tentativas. Aguarde ${limit.retryAfterSec}s e tente novamente.` };
+  }
+
   try {
     const dbPub = await prisma.publication.findUnique({
       where: {
@@ -243,17 +388,14 @@ export async function approvePublicationByTokenAction(token: string): Promise<{ 
       },
     });
 
-    // Write audit log
-    const firstMember = await prisma.member.findFirst({
-      where: { organizationId: dbPub.organizationId },
-      select: { userId: true }
-    });
-    if (firstMember) {
+    // Write audit log — ação do CLIENTE EXTERNO via link público de aprovação.
+    const auditUserId = await resolvePublicAuditUserId(dbPub.organizationId, dbPub.responsibleUser);
+    if (auditUserId) {
       await prisma.auditLog.create({
         data: {
           organizationId: dbPub.organizationId,
-          action: `PUBLICATION_APPROVED: ${dbPub.companyName}`,
-          userId: firstMember.userId,
+          action: `[CLIENTE_EXTERNO/LINK_PUBLICO] PUBLICATION_APPROVED: ${dbPub.companyName}`,
+          userId: auditUserId,
           target: dbPub.id,
         },
       });
@@ -268,6 +410,13 @@ export async function approvePublicationByTokenAction(token: string): Promise<{ 
 }
 
 export async function requestPublicationChangesByTokenAction(token: string, feedback: string): Promise<{ success: boolean; error?: string }> {
+  // Rate limit mais estrito nas mutações públicas.
+  const ip = await getClientIp();
+  const limit = checkRateLimit(`pub_mutate:${ip}`, 10, 60_000);
+  if (!limit.allowed) {
+    return { success: false, error: `Muitas tentativas. Aguarde ${limit.retryAfterSec}s e tente novamente.` };
+  }
+
   try {
     const dbPub = await prisma.publication.findUnique({
       where: {
@@ -289,17 +438,14 @@ export async function requestPublicationChangesByTokenAction(token: string, feed
       },
     });
 
-    // Write audit log
-    const firstMember = await prisma.member.findFirst({
-      where: { organizationId: dbPub.organizationId },
-      select: { userId: true }
-    });
-    if (firstMember) {
+    // Write audit log — ação do CLIENTE EXTERNO via link público de aprovação.
+    const auditUserId = await resolvePublicAuditUserId(dbPub.organizationId, dbPub.responsibleUser);
+    if (auditUserId) {
       await prisma.auditLog.create({
         data: {
           organizationId: dbPub.organizationId,
-          action: `PUBLICATION_CHANGES_REQUESTED: ${feedback.substring(0, 100)}`,
-          userId: firstMember.userId,
+          action: `[CLIENTE_EXTERNO/LINK_PUBLICO] PUBLICATION_CHANGES_REQUESTED: ${feedback.substring(0, 100)}`,
+          userId: auditUserId,
           target: dbPub.id,
         },
       });
@@ -325,7 +471,7 @@ export async function archivePublication(publicationId: string): Promise<{ succe
     }
 
     const activeOrgId = await getActiveOrganizationId(session);
-    await validateTenantAccess(activeOrgId);
+    const membership = await validateTenantAccess(activeOrgId);
 
     const dbPub = await prisma.publication.findUnique({
       where: { id: publicationId }
@@ -352,7 +498,7 @@ export async function archivePublication(publicationId: string): Promise<{ succe
     await prisma.auditLog.create({
       data: {
         organizationId: activeOrgId,
-        action: `PUBLICATION_ARCHIVED: ${dbPub.companyName}`,
+        action: auditAction(`PUBLICATION_ARCHIVED: ${dbPub.companyName}`, membership),
         userId: session.user.id,
         target: dbPub.id
       }
@@ -378,7 +524,7 @@ export async function restorePublication(publicationId: string): Promise<{ succe
     }
 
     const activeOrgId = await getActiveOrganizationId(session);
-    await validateTenantAccess(activeOrgId);
+    const membership = await validateTenantAccess(activeOrgId);
 
     const dbPub = await prisma.publication.findUnique({
       where: { id: publicationId }
@@ -405,7 +551,7 @@ export async function restorePublication(publicationId: string): Promise<{ succe
     await prisma.auditLog.create({
       data: {
         organizationId: activeOrgId,
-        action: `PUBLICATION_RESTORED: ${dbPub.companyName}`,
+        action: auditAction(`PUBLICATION_RESTORED: ${dbPub.companyName}`, membership),
         userId: session.user.id,
         target: dbPub.id
       }
@@ -450,7 +596,7 @@ export async function updatePublicationAction(
     }
 
     const activeOrgId = await getActiveOrganizationId(session);
-    await validateTenantAccess(activeOrgId);
+    const membership = await validateTenantAccess(activeOrgId);
 
     const dbPub = await prisma.publication.findUnique({
       where: { id: publicationId }
@@ -511,7 +657,7 @@ export async function updatePublicationAction(
     await prisma.auditLog.create({
       data: {
         organizationId: activeOrgId,
-        action: `PUBLICATION_UPDATED: ${data.companyName}`,
+        action: auditAction(`PUBLICATION_UPDATED: ${data.companyName}`, membership),
         userId: session.user.id,
         target: updatedDbPub.id
       }
@@ -539,7 +685,7 @@ export async function regeneratePublicationApprovalLinkAction(
     }
 
     const activeOrgId = await getActiveOrganizationId(session);
-    await validateTenantAccess(activeOrgId);
+    const membership = await validateTenantAccess(activeOrgId);
 
     const dbPub = await prisma.publication.findUnique({
       where: { id: publicationId }
@@ -566,7 +712,7 @@ export async function regeneratePublicationApprovalLinkAction(
     await prisma.auditLog.create({
       data: {
         organizationId: activeOrgId,
-        action: `PUBLICATION_APPROVAL_LINK_REGENERATED: ${updatedDbPub.companyName}`,
+        action: auditAction(`PUBLICATION_APPROVAL_LINK_REGENERATED: ${updatedDbPub.companyName}`, membership),
         userId: session.user.id,
         target: updatedDbPub.id
       }

@@ -27,7 +27,7 @@ import {
   approvePublicationByTokenAction, 
   requestPublicationChangesByTokenAction 
 } from '../../../publicacoes/actions';
-import type { Publication } from '../../../../types';
+import type { PublicApprovalPublication } from '../../../../types';
 
 // Custom Brand Icons to avoid missing lucide-react exports
 function InstagramIcon({ className }: { className?: string }) {
@@ -86,7 +86,7 @@ function ApprovalContent() {
     requestPublicationChangesByToken 
   } = useStore();
 
-  const [dbPub, setDbPub] = useState<Publication | null>(null);
+  const [dbPub, setDbPub] = useState<PublicApprovalPublication | null>(null);
   const [isLoadingDb, setIsLoadingDb] = useState(isDatabaseDataMode);
   const [brokenImages, setBrokenImages] = useState<Record<string, boolean>>({});
   const [carouselIndex, setCarouselIndex] = useState(0);
@@ -937,12 +937,7 @@ function ApprovalContent() {
                   </div>
                 </div>
 
-                <div className="border-t border-border/20 pt-4 flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Responsável</span>
-                    <span className="text-xs text-foreground block">{publication.responsibleUser}</span>
-                  </div>
-                  
+                <div className="border-t border-border/20 pt-4 flex items-center justify-end">
                   {/* Countdown widget */}
                   <div className={`rounded-xl px-3 py-1.5 flex items-center gap-2 border ${getTimerColorClass()}`}>
                     <Clock className="h-4 w-4 animate-pulse shrink-0" />
