@@ -12,6 +12,7 @@ import {
 import { useTenantStore } from '../../../lib/store';
 import { useMounted } from '../../../hooks/useMounted';
 import type { TaskPriority, Client, TeamTask, HistoryEvent, TaskStatus } from '../../../types';
+import { formatDateBR } from '../../../lib/date';
 import Button from '../../../components/ui/button';
 import Input from '../../../components/ui/input';
 import Textarea from '../../../components/ui/textarea';
@@ -908,7 +909,7 @@ export default function ClientProfilePage() {
                         {/* Details */}
                         <div className="p-4 space-y-3.5">
                           <div className="flex items-center justify-between text-xs text-muted-foreground">
-                            <span>Agendado para: <strong>{new Date(pub.scheduledDate).toLocaleDateString('pt-BR')}</strong></span>
+                            <span>Agendado para: <strong>{formatDateBR(pub.scheduledDate)}</strong></span>
                             <span>Criado por: {pub.responsibleUser}</span>
                           </div>
 

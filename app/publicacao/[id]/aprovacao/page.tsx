@@ -28,6 +28,7 @@ import {
   requestPublicationChangesByTokenAction 
 } from '../../../publicacoes/actions';
 import type { PublicApprovalPublication } from '../../../../types';
+import { formatDateBR } from '../../../../lib/date';
 
 // Custom Brand Icons to avoid missing lucide-react exports
 function InstagramIcon({ className }: { className?: string }) {
@@ -932,7 +933,7 @@ function ApprovalContent() {
                     <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Data Programada</span>
                     <span className="text-sm font-semibold text-foreground block leading-tight flex items-center gap-1.5">
                       <Calendar className="h-4 w-4 text-primary shrink-0" />
-                      {new Date(publication.scheduledDate).toLocaleDateString('pt-BR')}
+                      {formatDateBR(publication.scheduledDate)}
                     </span>
                   </div>
                 </div>

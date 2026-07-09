@@ -27,6 +27,7 @@ import StatusBadge from '../../components/ui/status-badge';
 import EmptyState from '../../components/ui/empty-state';
 import DatePicker from '../../components/ui/date-picker';
 import type { Client, Publication } from '../../types';
+import { formatDateBR } from '../../lib/date';
 
 // Payload de criação/edição enviado pela View aos wrappers (DB ou sandbox).
 export interface PublicationFormPayload {
@@ -632,7 +633,7 @@ export default function PublicacoesView({
                       </div>
                       <div className="text-right text-[10px] text-muted-foreground shrink-0">
                         <span className="block font-medium">Agendamento:</span>
-                        <strong className="text-foreground">{new Date(pub.scheduledDate).toLocaleDateString('pt-BR')}</strong>
+                        <strong className="text-foreground">{formatDateBR(pub.scheduledDate)}</strong>
                       </div>
                     </div>
 
