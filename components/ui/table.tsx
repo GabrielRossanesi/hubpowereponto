@@ -1,9 +1,24 @@
 import React from 'react';
 
-export function Table({ className = '', children, ...props }: React.HTMLAttributes<HTMLTableElement>) {
+interface TableProps extends React.HTMLAttributes<HTMLTableElement> {
+  variant?: 'default' | 'operational';
+  containerClassName?: string;
+}
+
+export function Table({
+  className = '',
+  containerClassName = '',
+  variant = 'default',
+  children,
+  ...props
+}: TableProps) {
+  const isOperational = variant === 'operational';
+
   return (
-    <div className="w-full overflow-x-auto border border-border/20 rounded-xl bg-card/30 backdrop-blur-sm shadow-sm">
-      <table className={`w-full min-w-[600px] border-collapse text-left text-sm ${className}`} {...props}>
+    <div className={`w-full overflow-x-auto ${isOperational
+      ? 'rounded-lg border border-border bg-surface shadow-subtle'
+      : 'rounded-xl border border-border/20 bg-card/30 shadow-sm backdrop-blur-sm'} ${containerClassName}`}>
+      <table className={`w-full border-collapse text-left text-sm ${isOperational ? 'min-w-[680px]' : 'min-w-[600px]'} ${className}`} {...props}>
         {children}
       </table>
     </div>

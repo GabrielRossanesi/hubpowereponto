@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { MoreVertical } from 'lucide-react';
-import Button from './button';
+import IconButton from './icon-button';
 
 interface DropdownItem {
   label: string;
@@ -14,11 +14,14 @@ interface DropdownItem {
 interface DropdownProps {
   items: DropdownItem[];
   trigger?: React.ReactNode;
+  label?: string;
 }
 
-export function Dropdown({ items, trigger }: DropdownProps) {
+export function Dropdown({ items, trigger, label = 'Abrir menu de ações' }: DropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -35,26 +38,66 @@ export function Dropdown({ items, trigger }: DropdownProps) {
     };
   }, [isOpen]);
 
+  useEffect(() => {
+    if (isOpen) {
+      requestAnimationFrame(() => menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus());
+    }
+  }, [isOpen]);
+
+  const closeAndRestoreFocus = () => {
+    setIsOpen(false);
+    requestAnimationFrame(() => triggerRef.current?.focus());
+  };
+
+  const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const menuItems = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
+    const currentIndex = menuItems.indexOf(document.activeElement as HTMLButtonElement);
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeAndRestoreFocus();
+    } else if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      menuItems[(currentIndex + 1) % menuItems.length]?.focus();
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      menuItems[(currentIndex - 1 + menuItems.length) % menuItems.length]?.focus();
+    }
+  };
+
   return (
     <div className="relative inline-block text-left" ref={dropdownRef}>
-      <div onClick={() => setIsOpen(!isOpen)}>
-        {trigger || (
-          <Button variant="ghost" size="sm" className="h-8 w-8 p-0 rounded-full">
-            <MoreVertical className="h-4 w-4 text-muted-foreground" />
-          </Button>
-        )}
-      </div>
+      <IconButton
+        ref={triggerRef}
+        variant="ghost"
+        size="sm"
+        className="h-8 w-8 rounded-md"
+        label={label}
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        {trigger || <MoreVertical className="h-4 w-4" aria-hidden="true" />}
+      </IconButton>
 
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-48 origin-top-right rounded-lg border border-border bg-card shadow-lg ring-1 ring-black/5 focus:outline-none z-40 py-1 animate-in fade-in zoom-in-95 duration-100">
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-label={label}
+          onKeyDown={handleMenuKeyDown}
+          className="absolute right-0 z-40 mt-2 w-48 origin-top-right animate-in rounded-lg border border-border bg-surface-elevated py-1 shadow-elevated fade-in zoom-in-95 duration-100"
+        >
           {items.map((item, index) => (
             <button
               key={index}
+              type="button"
+              role="menuitem"
               onClick={() => {
                 item.onClick();
                 setIsOpen(false);
               }}
-              className={`flex w-full items-center px-4 py-2 text-sm transition-colors cursor-pointer hover:bg-muted ${
+              className={`flex h-9 w-full cursor-pointer items-center px-3 text-body-small transition-colors hover:bg-surface-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30 ${
                 item.variant === 'danger' 
                   ? 'text-danger font-medium' 
                   : 'text-foreground'

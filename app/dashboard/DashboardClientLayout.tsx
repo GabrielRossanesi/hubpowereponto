@@ -1,71 +1,45 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import React, { useCallback, useRef, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { Lock } from 'lucide-react';
 import Sidebar from '../../components/layout/sidebar';
 import Topbar from '../../components/layout/topbar';
-import { useTenantStore, useStore } from '../../lib/store';
+import AppShellAtmosphere from '../../components/layout/app-shell-atmosphere';
+import AppContentContainer from '../../components/layout/app-content-container';
+import { getPlanDefaultFeatures, useStore } from '../../lib/store';
 import { useMounted } from '../../hooks/useMounted';
-import { useDatabaseTenantContext } from '../../hooks/useDatabaseTenantContext';
+import { DatabaseTenantContextProvider } from '../../hooks/useDatabaseTenantContext';
+import type { DatabaseTenantContext } from '../../lib/tenant-context-actions';
 import { isDatabaseDataMode } from '../../lib/data-mode';
-import Button from '../../components/ui/button';
-import { useSession } from '../../lib/auth-client';
 
 export default function DashboardClientLayout({
   children,
+  initialTenantContext,
 }: {
   children: React.ReactNode;
+  initialTenantContext: DatabaseTenantContext | null;
 }) {
-  const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
   const pathname = usePathname();
-  const store = useTenantStore();
-  const sandboxFeatures = store.currentFeatures;
-  const currentOrgId = useStore(state => state.currentOrganizationId);
-  const setCurrentOrgId = useStore(state => state.setCurrentOrganizationId);
-  const { context: databaseTenantContext } = useDatabaseTenantContext();
-  const [backgroundOffset, setBackgroundOffset] = useState({ x: 0, y: 0 });
+  const sandboxOrgId = useStore(state => state.currentOrganizationId);
+  const sandboxOrganizations = useStore(state => state.organizations);
+  const sandboxFeatureList = useStore(state => state.organizationFeatures);
   const hasMounted = useMounted();
 
-  const isDatabaseMode = isDatabaseDataMode;
-
-  // Sync currentOrganizationId to Zustand store in database mode
-  useEffect(() => {
-    if (isDatabaseMode && databaseTenantContext?.organization.id) {
-      if (currentOrgId !== databaseTenantContext.organization.id) {
-        setCurrentOrgId(databaseTenantContext.organization.id);
-      }
-    }
-  }, [isDatabaseMode, databaseTenantContext?.organization.id, currentOrgId, setCurrentOrgId]);
-
-  const currentFeatures = isDatabaseMode ? databaseTenantContext?.features : sandboxFeatures;
-  const { data: session, isPending } = useSession();
-
-  useEffect(() => {
-    if (isDatabaseMode && !isPending && !session) {
-      router.push('/login');
-    }
-  }, [isDatabaseMode, isPending, session, router]);
-
-  // Handle subtle mousemove parallax for premium background depth
-  useEffect(() => {
-    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const isMobile = window.innerWidth < 1024; // lg breakpoint
-    if (mediaQuery.matches || isMobile) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      const x = (e.clientX - window.innerWidth / 2) * 0.012;
-      const y = (e.clientY - window.innerHeight / 2) * 0.012;
-      setBackgroundOffset({ x, y });
-    };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-    };
-  }, []);
+  const sandboxOrganization = sandboxOrganizations.find(org => org.id === sandboxOrgId);
+  const sandboxFeatures = sandboxFeatureList.find(features => features.organizationId === sandboxOrgId) ?? {
+    organizationId: sandboxOrgId,
+    ...getPlanDefaultFeatures(sandboxOrganization?.planId ?? 'starter'),
+  };
+  const currentFeatures = isDatabaseDataMode ? initialTenantContext?.features : sandboxFeatures;
+  const currentWorkspaceName = isDatabaseDataMode
+    ? initialTenantContext?.organization.name
+    : sandboxOrganization?.name;
+  const openMobileSidebar = useCallback(() => setSidebarOpen(true), []);
+  const closeMobileSidebar = useCallback(() => setSidebarOpen(false), []);
 
   const routeFeatureMap: Record<string, string> = {
     '/leads': 'leads',
@@ -80,88 +54,55 @@ export default function DashboardClientLayout({
     '/financeiro': 'financial',
   };
 
-  const matchedRoute = Object.keys(routeFeatureMap).find(route => pathname && pathname.startsWith(route));
+  const matchedRoute = Object.keys(routeFeatureMap).find(route => pathname?.startsWith(route));
   let isBlocked = false;
+
   if (hasMounted && matchedRoute && currentFeatures) {
     const featureKey = routeFeatureMap[matchedRoute] as keyof Omit<typeof currentFeatures, 'organizationId'>;
-    if (currentFeatures[featureKey] === false) {
-      isBlocked = true;
-    }
-  }
-
-  if (isDatabaseMode && (isPending || !session)) {
-    return (
-      <div className="flex h-screen w-screen items-center justify-center bg-background">
-        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-primary" />
-      </div>
-    );
+    isBlocked = currentFeatures[featureKey] === false;
   }
 
   return (
-    <div className="relative flex h-screen w-screen overflow-hidden bg-background">
-      {/* Premium Background Layers */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0 select-none">
-        {/* Glows in Dark Mode */}
-        <div className="absolute top-[-15%] left-[-15%] w-[60%] h-[60%] rounded-full bg-primary/4 blur-[120px] dark:bg-primary/2.5 dark:block hidden transition-opacity duration-300" />
-        <div className="absolute bottom-[-15%] right-[-15%] w-[60%] h-[60%] rounded-full bg-secondary/6 blur-[120px] dark:bg-secondary/3 dark:block hidden transition-opacity duration-300" />
+    <DatabaseTenantContextProvider context={initialTenantContext}>
+      <div className="relative isolate flex h-dvh w-full overflow-hidden bg-background text-foreground">
+        <AppShellAtmosphere />
+        <Sidebar isOpen={sidebarOpen} onClose={closeMobileSidebar} triggerRef={menuButtonRef} />
 
-        {/* Parallax layer: Subtle glowing circles */}
-        <div
-          className="absolute inset-0 transition-transform duration-200 ease-out hidden dark:block"
-          style={{
-            transform: `translate(${backgroundOffset.x}px, ${backgroundOffset.y}px)`,
-          }}
-        >
-          <div className="absolute top-[25%] right-[20%] w-80 h-80 rounded-full bg-primary/1.5 blur-[85px]" />
-          <div className="absolute bottom-[20%] left-[15%] w-[450px] h-[450px] rounded-full bg-accent-cool/1.5 blur-[110px]" />
-        </div>
+        <div className="relative z-10 flex min-w-0 flex-1 flex-col overflow-hidden">
+          <Topbar
+            onMenuClick={openMobileSidebar}
+            isMobileMenuOpen={sidebarOpen}
+            menuButtonRef={menuButtonRef}
+            workspaceName={currentWorkspaceName}
+          />
 
-        {/* Grid Overlay with Radial Gradient Mask */}
-        <div
-          className="absolute inset-0 bg-[linear-gradient(to_right,rgba(128,128,128,0.02)_1px,transparent_1px),linear-gradient(to_bottom,rgba(128,128,128,0.02)_1px,transparent_1px)] bg-[size:32px_32px] [mask-image:radial-gradient(ellipse_65%_55%_at_50%_40%,#000_60%,transparent_100%)] opacity-30 dark:opacity-40"
-        />
-
-        {/* Very subtle dark-vignette depth */}
-        <div className="absolute inset-0 bg-[radial-gradient(transparent_50%,rgba(0,0,0,0.02))] dark:bg-[radial-gradient(transparent_50%,rgba(0,0,0,0.12))] opacity-30" />
-      </div>
-
-      {/* Main Layout Layer */}
-      <div className="relative flex h-full w-full overflow-hidden z-10 bg-transparent">
-        {/* Sidebar navigation */}
-        <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-
-        {/* Main viewport */}
-        <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-transparent">
-          {/* Top administration bar */}
-          <Topbar onMenuClick={() => setSidebarOpen(true)} />
-
-          {/* Main content route views */}
-          <main className="flex-1 overflow-y-auto p-6 lg:p-8 bg-transparent scroll-smooth">
-            <div className="max-w-7xl mx-auto animate-in fade-in duration-300">
+          <main id="main-content" className="relative flex-1 overflow-y-auto bg-transparent">
+            <AppContentContainer className="relative z-10 min-h-full py-page">
               {isBlocked ? (
-                <div className="min-h-[60vh] flex flex-col items-center justify-center text-center p-6 max-w-md mx-auto">
-                  <div className="h-16 w-16 rounded-full bg-warning/10 text-warning flex items-center justify-center mb-6 ring-8 ring-warning/5 animate-bounce">
-                    <Lock className="h-8 w-8" />
+                <section className="mx-auto flex min-h-[60vh] max-w-md flex-col items-center justify-center text-center" aria-labelledby="blocked-title">
+                  <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-lg border border-warning/20 bg-warning-subtle text-warning">
+                    <Lock className="h-5 w-5" aria-hidden="true" />
                   </div>
-                  <h1 className="text-xl font-bold text-foreground mb-3 tracking-tight">
-                    Funcionalidade não disponível no seu plano
+                  <h1 id="blocked-title" className="text-page-title font-semibold tracking-tight">
+                    Módulo indisponível no plano atual
                   </h1>
-                  <p className="text-sm text-muted-foreground leading-relaxed mb-8">
-                    Este módulo não está habilitado para a organização atual. Fale com o operador NV Hub para liberar o acesso.
+                  <p className="mt-2 text-body-small text-foreground-muted">
+                    A organização atual não possui acesso a este módulo. Um operador do NV Hub pode revisar as funcionalidades do plano.
                   </p>
-                  <Link href="/dashboard" passHref legacyBehavior>
-                    <Button className="w-full sm:w-auto font-semibold">
-                      Voltar ao Dashboard
-                    </Button>
+                  <Link
+                    href="/dashboard"
+                    className="mt-6 inline-flex h-9 items-center justify-center rounded-md bg-primary px-4 text-label font-semibold text-primary-foreground transition-colors hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35"
+                  >
+                    Voltar ao Dashboard
                   </Link>
-                </div>
+                </section>
               ) : (
                 children
               )}
-            </div>
+            </AppContentContainer>
           </main>
         </div>
       </div>
-    </div>
+    </DatabaseTenantContextProvider>
   );
 }

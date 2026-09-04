@@ -1,8 +1,10 @@
 'use server';
 
+import { cache } from 'react';
 import prisma from './prisma';
 import { getSession, getOrResolveActiveOrganizationId } from './tenant';
 import { isDatabaseDataMode } from './data-mode';
+import { measureServerTiming } from './performance';
 import type { Organization, OrganizationFeatures, PlanType, UserRole } from '../types';
 
 export interface DatabaseTenantContext {
@@ -10,6 +12,8 @@ export interface DatabaseTenantContext {
   features: OrganizationFeatures;
   membershipRole: UserRole;
   platformRole?: string | null;
+  userName: string;
+  mustChangePassword: boolean;
 }
 
 function getDefaultFeatures(planId: PlanType): Omit<OrganizationFeatures, 'organizationId'> {
@@ -48,7 +52,7 @@ function getDefaultFeatures(planId: PlanType): Omit<OrganizationFeatures, 'organ
   };
 }
 
-export async function getCurrentDatabaseTenantContext(): Promise<DatabaseTenantContext | null> {
+async function loadCurrentDatabaseTenantContext(): Promise<DatabaseTenantContext | null> {
   if (!isDatabaseDataMode) return null;
 
   const session = await getSession();
@@ -62,35 +66,77 @@ export async function getCurrentDatabaseTenantContext(): Promise<DatabaseTenantC
     return null;
   }
 
-  const [membership, user] = await Promise.all([
-    prisma.member.findFirst({
+  const [membership, user] = await measureServerTiming('tenant/context-query', () => Promise.all([
+    prisma.member.findUnique({
       where: {
-        userId: session.user.id,
-        organizationId: preferredOrganizationId,
-      },
-      include: {
-        organization: {
-          include: {
-            features: true,
-          },
+        organizationId_userId: {
+          userId: session.user.id,
+          organizationId: preferredOrganizationId,
         },
       },
-      orderBy: {
-        createdAt: 'asc',
+      select: {
+        role: true,
+        organization: {
+          select: {
+            id: true,
+            name: true,
+            planId: true,
+            isActive: true,
+            logo: true,
+            createdAt: true,
+            features: {
+              select: {
+                leads: true,
+                clients: true,
+                proposals: true,
+                contracts: true,
+                charges: true,
+                onboarding: true,
+                publications: true,
+                tasks: true,
+                history: true,
+                team: true,
+                financial: true,
+              },
+            },
+          },
+        },
       },
     }),
     prisma.user.findUnique({
       where: { id: session.user.id },
-      select: { platformRole: true },
+      select: { platformRole: true, mustChangePassword: true },
     }),
-  ]);
+  ]));
 
   if (!membership) {
     const isPlatformOperator = user?.platformRole === 'operator' || user?.platformRole === 'platform_admin';
     if (isPlatformOperator && preferredOrganizationId) {
       const org = await prisma.organization.findUnique({
         where: { id: preferredOrganizationId },
-        include: { features: true },
+        select: {
+          id: true,
+          name: true,
+          planId: true,
+          isActive: true,
+          logo: true,
+          createdAt: true,
+          features: {
+            select: {
+              leads: true,
+              clients: true,
+              proposals: true,
+              contracts: true,
+              charges: true,
+              onboarding: true,
+              publications: true,
+              tasks: true,
+              history: true,
+              team: true,
+              financial: true,
+            },
+          },
+        },
       });
 
       if (org) {
@@ -125,6 +171,8 @@ export async function getCurrentDatabaseTenantContext(): Promise<DatabaseTenantC
           },
           membershipRole: 'owner',
           platformRole: user?.platformRole,
+          userName: session.user.name,
+          mustChangePassword: user?.mustChangePassword ?? false,
         };
       }
     }
@@ -163,5 +211,13 @@ export async function getCurrentDatabaseTenantContext(): Promise<DatabaseTenantC
     },
     membershipRole: membership.role as UserRole,
     platformRole: user?.platformRole,
+    userName: session.user.name,
+    mustChangePassword: user?.mustChangePassword ?? false,
   };
+}
+
+const getCachedDatabaseTenantContext = cache(loadCurrentDatabaseTenantContext);
+
+export async function getCurrentDatabaseTenantContext(): Promise<DatabaseTenantContext | null> {
+  return getCachedDatabaseTenantContext();
 }

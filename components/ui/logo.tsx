@@ -1,5 +1,3 @@
-'use client';
-
 import React from 'react';
 
 interface LogoProps {
@@ -25,17 +23,6 @@ export function LogoIcon({ className = '', size = 'md' }: { className?: string; 
       className={`${sizeMap[size]} ${className}`}
       aria-hidden="true"
     >
-      <defs>
-        {/* Glow for the hub node */}
-        <filter id="hub-glow-new" x="-30%" y="-30%" width="160%" height="160%">
-          <feGaussianBlur stdDeviation="2.5" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
-      </defs>
-
       {/* The Monogram: Distinct N and V Side-by-Side */}
       {/* N shape: Left leg vertical, diagonal down-right, right leg vertical */}
       <path
@@ -57,14 +44,14 @@ export function LogoIcon({ className = '', size = 'md' }: { className?: string; 
         className="transition-all duration-300"
       />
 
-      {/* Core Hub Node: A glowing circle at the bottom of the V (64, 70) */}
+      {/* Core Hub Node */}
       <circle
         cx="64"
         cy="70"
         r="6.5"
-        fill="#ffffff"
-        className="animate-pulse"
-        filter="url(#hub-glow-new)"
+        fill="var(--surface)"
+        stroke="var(--primary)"
+        strokeWidth="2"
       />
       <circle
         cx="64"
@@ -100,22 +87,24 @@ export function LogoHorizontal({ className = '', iconClassName = '', textClassNa
 export function LogoSidebar({ className = '', isCollapsed = false }: { className?: string; isCollapsed?: boolean }) {
   if (isCollapsed) {
     return (
-      <div className={`flex items-center justify-center relative group w-full ${className}`}>
-        <LogoIcon size="md" className="hover:scale-105 transition-transform duration-200" />
+      <div className={`nv-brand-mark flex h-11 w-11 items-center justify-center rounded-lg ${className}`}>
+        <LogoIcon size="md" />
       </div>
     );
   }
 
   return (
-    <div className={`flex items-center gap-3 select-none ${className}`}>
-      <LogoIcon size="md" className="shrink-0 hover:rotate-[3deg] transition-transform duration-200" />
-      <div className="flex flex-col animate-in fade-in duration-200">
-        <div className="flex items-baseline font-bold text-sm tracking-tight text-foreground leading-none">
+    <div className={`flex select-none items-center gap-3 ${className}`}>
+      <span className="nv-brand-mark flex h-11 w-11 shrink-0 items-center justify-center rounded-lg">
+        <LogoIcon size="md" />
+      </span>
+      <div className="flex min-w-0 flex-col">
+        <div className="flex items-baseline text-base font-bold leading-none tracking-[-0.025em] text-foreground">
           <span>NV</span>
-          <span className="text-primary ml-0.5 font-semibold tracking-wide">Hub</span>
+          <span className="ml-1 font-semibold tracking-wide text-primary">Hub</span>
         </div>
-        <span className="text-[9px] text-muted-foreground font-mono font-bold uppercase tracking-[0.12em] mt-1">
-          Revenue &amp; Operations
+        <span className="mt-1.5 truncate font-mono text-[0.5625rem] font-semibold uppercase tracking-[0.13em] text-foreground-muted">
+          Operações conectadas
         </span>
       </div>
     </div>

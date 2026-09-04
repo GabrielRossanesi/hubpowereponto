@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   getCurrentDatabaseTenantContext,
   type DatabaseTenantContext,
@@ -12,13 +12,35 @@ let cachedContextPromise: Promise<DatabaseTenantContext | null> | null = null;
 let cachedContextValue: DatabaseTenantContext | null = null;
 let cachedError: Error | null = null;
 
+const DatabaseTenantContextContext = createContext<DatabaseTenantContext | null | undefined>(undefined);
+
+export function DatabaseTenantContextProvider({
+  context,
+  children,
+}: {
+  context: DatabaseTenantContext | null;
+  children: ReactNode;
+}) {
+  const value = useMemo(() => context, [context]);
+
+  return (
+    <DatabaseTenantContextContext.Provider value={value}>
+      {children}
+    </DatabaseTenantContextContext.Provider>
+  );
+}
+
 export function useDatabaseTenantContext() {
-  const [context, setContext] = useState<DatabaseTenantContext | null>(cachedContextValue);
-  const [isLoading, setIsLoading] = useState(isDatabaseDataMode && !cachedContextValue && !cachedError);
+  const providedContext = useContext(DatabaseTenantContextContext);
+  const initialContext = providedContext === undefined ? cachedContextValue : providedContext;
+  const [context, setContext] = useState<DatabaseTenantContext | null>(initialContext);
+  const [isLoading, setIsLoading] = useState(
+    providedContext === undefined && isDatabaseDataMode && !cachedContextValue && !cachedError,
+  );
   const [error, setError] = useState<Error | null>(cachedError);
 
   useEffect(() => {
-    if (!isDatabaseDataMode || cachedContextValue) {
+    if (providedContext !== undefined || !isDatabaseDataMode || cachedContextValue) {
       return;
     }
 
@@ -54,7 +76,15 @@ export function useDatabaseTenantContext() {
     return () => {
       isActive = false;
     };
-  }, []);
+  }, [providedContext]);
+
+  if (providedContext !== undefined) {
+    return {
+      context: providedContext,
+      isLoading: false,
+      error: null,
+    };
+  }
 
   return {
     context,

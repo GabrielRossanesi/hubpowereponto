@@ -2,7 +2,8 @@ import type { ReactNode } from 'react';
 import { redirect } from 'next/navigation';
 import { getSession } from '../../lib/tenant';
 import { isDatabaseDataMode } from '../../lib/data-mode';
-import prisma from '../../lib/prisma';
+import { getCurrentDatabaseTenantContext, type DatabaseTenantContext } from '../../lib/tenant-context-actions';
+import { measureServerTiming } from '../../lib/performance';
 import DashboardClientLayout from './DashboardClientLayout';
 
 export const dynamic = 'force-dynamic';
@@ -12,21 +13,30 @@ export default async function ServerDashboardLayout({
 }: {
   children: ReactNode;
 }) {
+  let tenantContext: DatabaseTenantContext | null = null;
+
   if (isDatabaseDataMode) {
-    const session = await getSession();
+    const result = await measureServerTiming('app/layout-auth-context', async () => {
+      const session = await getSession();
+      const context = session ? await getCurrentDatabaseTenantContext() : null;
+      return { session, context };
+    });
+
+    const { session, context } = result;
     if (!session) {
       redirect('/login');
     }
 
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-      select: { mustChangePassword: true },
-    });
-
-    if (user?.mustChangePassword) {
+    if (context?.mustChangePassword) {
       redirect('/primeiro-acesso');
     }
+
+    tenantContext = context;
   }
 
-  return <DashboardClientLayout>{children}</DashboardClientLayout>;
+  return (
+    <DashboardClientLayout initialTenantContext={tenantContext}>
+      {children}
+    </DashboardClientLayout>
+  );
 }

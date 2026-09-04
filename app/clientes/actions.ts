@@ -3,12 +3,15 @@
 import prisma from '../../lib/prisma';
 import { getSession, validateTenantAccess, getActiveOrganizationId } from '../../lib/tenant';
 import { isDatabaseDataMode } from '../../lib/data-mode';
+import { measureServerTiming } from '../../lib/performance';
+import { getCurrentDatabaseTenantContext } from '../../lib/tenant-context-actions';
 import type { Client, ClientStatus, TaskStatus, TaskPriority } from '../../types';
 
 // Helper to check if the 'clients' feature is enabled for the organization
 async function checkClientsFeature(organizationId: string) {
   const feature = await prisma.organizationFeature.findUnique({
     where: { organizationId },
+    select: { clients: true },
   });
   if (feature && feature.clients === false) {
     throw new Error('Módulo de clientes desabilitado para esta organização.');
@@ -49,21 +52,39 @@ export async function getClients(includeArchived = false): Promise<Client[]> {
   if (!isDatabaseDataMode) return [];
 
   try {
-    const activeOrgId = await getActiveOrganizationId();
-    await Promise.all([
-      validateTenantAccess(activeOrgId),
-      checkClientsFeature(activeOrgId),
-    ]);
+    const tenantContext = await getCurrentDatabaseTenantContext();
+    if (!tenantContext) throw new Error('Unauthorized tenant context.');
+    if (tenantContext.features.clients === false) {
+      throw new Error('Clients module is disabled for this organization.');
+    }
+    const activeOrgId = tenantContext.organization.id;
 
-    const dbClients = await prisma.client.findMany({
-      where: {
-        organizationId: activeOrgId,
-        ...(includeArchived ? {} : { status: { not: 'archived' } }),
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+    const dbClients = await measureServerTiming('clients/query', () =>
+      prisma.client.findMany({
+        where: {
+          organizationId: activeOrgId,
+          ...(includeArchived ? {} : { status: { not: 'archived' } }),
+        },
+        select: {
+          id: true,
+          organizationId: true,
+          companyName: true,
+          document: true,
+          documentType: true,
+          contactName: true,
+          email: true,
+          phone: true,
+          status: true,
+          notes: true,
+          responsibleUser: true,
+          createdAt: true,
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      }),
+      { includeArchived },
+    );
 
     return dbClients.map(mapDbClientToClient);
   } catch (err) {
@@ -349,23 +370,26 @@ export async function getTenantMembers(): Promise<{ id: string; name: string }[]
   if (!isDatabaseDataMode) return [];
 
   try {
-    const activeOrgId = await getActiveOrganizationId();
-    await validateTenantAccess(activeOrgId);
+    const tenantContext = await getCurrentDatabaseTenantContext();
+    if (!tenantContext) throw new Error('Unauthorized tenant context.');
+    const activeOrgId = tenantContext.organization.id;
 
-    const members = await prisma.member.findMany({
-      where: { organizationId: activeOrgId },
-      include: {
+    const members = await measureServerTiming('members/query', () =>
+      prisma.member.findMany({
+        where: { organizationId: activeOrgId },
+        select: {
         user: {
           select: {
             id: true,
             name: true,
           },
         },
-      },
-      orderBy: {
-        createdAt: 'asc',
-      },
-    });
+        },
+        orderBy: {
+          createdAt: 'asc',
+        },
+      }),
+    );
 
     return members
       .map((m) => ({

@@ -3,12 +3,15 @@
 import prisma from '../../lib/prisma';
 import { getSession, validateTenantAccess } from '../../lib/tenant';
 import { isDatabaseDataMode } from '../../lib/data-mode';
+import { measureServerTiming } from '../../lib/performance';
+import { getCurrentDatabaseTenantContext } from '../../lib/tenant-context-actions';
 import type { TeamTask, TaskStatus, TaskPriority, TaskNote } from '../../types';
 
 // Helper to check if the 'tasks' feature is enabled for the organization
 async function checkTasksFeature(organizationId: string) {
   const feature = await prisma.organizationFeature.findUnique({
     where: { organizationId },
+    select: { tasks: true },
   });
   if (feature && feature.tasks === false) {
     throw new Error('Módulo de tarefas desabilitado para esta organização.');
@@ -56,36 +59,54 @@ function mapDbTaskToTeamTask(dbTask: {
   };
 }
 
-export async function getTasks(includeArchived = false): Promise<TeamTask[]> {
+export async function getTasks(includeArchived = false, includeNotes = true): Promise<TeamTask[]> {
   if (!isDatabaseDataMode) return [];
 
-  const session = await getSession();
-  if (!session || !session.session.activeOrganizationId) {
-    throw new Error('Não autorizado: Organização ativa não selecionada.');
+  const tenantContext = await getCurrentDatabaseTenantContext();
+  if (!tenantContext) throw new Error('Unauthorized tenant context.');
+  if (tenantContext.features.tasks === false) {
+    throw new Error('Tasks module is disabled for this organization.');
   }
+  const activeOrgId = tenantContext.organization.id;
 
-  const activeOrgId = session.session.activeOrganizationId;
-  await Promise.all([
-    validateTenantAccess(activeOrgId),
-    checkTasksFeature(activeOrgId),
-  ]);
-
-  const dbTasks = await prisma.task.findMany({
-    where: {
-      organizationId: activeOrgId,
-      ...(includeArchived ? {} : { status: { not: 'archived' } }),
-    },
-    include: {
-      client: true,
-      assignedUser: true,
-      notes: {
-        orderBy: { createdAt: 'asc' },
+  const dbTasks = await measureServerTiming('tasks/query', () =>
+    prisma.task.findMany({
+      where: {
+        organizationId: activeOrgId,
+        ...(includeArchived ? {} : { status: { not: 'archived' } }),
       },
-    },
-    orderBy: {
-      createdAt: 'desc',
-    },
-  });
+      select: {
+        id: true,
+        organizationId: true,
+        title: true,
+        description: true,
+        status: true,
+        priority: true,
+        dueDate: true,
+        createdAt: true,
+        clientId: true,
+        client: {
+          select: { companyName: true },
+        },
+        assignedUser: {
+          select: { name: true },
+        },
+        notes: includeNotes ? {
+          select: {
+            id: true,
+            authorName: true,
+            content: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: 'asc' },
+        } : undefined,
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    }),
+    { includeArchived, includeNotes },
+  );
 
   return dbTasks.map(mapDbTaskToTeamTask);
 }

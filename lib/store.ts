@@ -1700,7 +1700,7 @@ const initialFeatures: OrganizationFeatures[] = [
 ];
 
 export const useStore = create<SystemState>()(
-  persist(
+  persist<SystemState, [], [], Partial<SystemState>>(
     (set, get) => ({
       organizations: initialOrganizations,
       currentOrganizationId: 'org_hub_power',
@@ -3408,11 +3408,21 @@ export const useStore = create<SystemState>()(
       }
     }),
     {
-      name: 'hub-power-ponto-storage',
-      storage: createJSONStorage(() => localStorage),
+      name: isDatabaseDataMode ? 'nv-hub-ui-storage-v1' : 'hub-power-ponto-storage',
+      storage: createJSONStorage<Partial<SystemState>>(() => localStorage),
+      partialize: (state) => isDatabaseDataMode
+        ? { isSidebarCollapsed: state.isSidebarCollapsed }
+        : state,
         merge: (persistedState: unknown, currentState: SystemState): SystemState => {
           if (!persistedState) return currentState;
           const state = persistedState as Partial<SystemState>;
+
+          if (isDatabaseDataMode) {
+            return {
+              ...currentState,
+              isSidebarCollapsed: state.isSidebarCollapsed ?? currentState.isSidebarCollapsed,
+            };
+          }
 
           const backfill = <T extends { id: string; organizationId?: string }>(list: T[] | undefined, initialList: T[]): T[] => {
             if (!list) return initialList;

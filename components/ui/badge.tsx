@@ -5,15 +5,15 @@ export interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
 }
 
 export function Badge({ className = '', variant = 'default', children, ...props }: BadgeProps) {
-  const baseStyles = 'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold select-none border transition-colors';
+  const baseStyles = 'inline-flex items-center rounded-full border px-2 py-0.5 text-caption font-semibold leading-4 select-none transition-colors';
   
   const variants = {
-    default: 'bg-primary/10 text-primary border-primary/25',
-    muted: 'bg-secondary/50 text-muted-foreground border-border/40',
-    success: 'bg-success/10 text-success border-success/20',
-    warning: 'bg-warning/10 text-warning border-warning/20',
-    danger: 'bg-danger/10 text-danger border-danger/20',
-    info: 'bg-info/10 text-info border-info/20',
+    default: 'bg-primary-subtle text-primary border-primary/15',
+    muted: 'bg-muted text-foreground-muted border-border',
+    success: 'bg-success-subtle text-success border-success/15',
+    warning: 'bg-warning-subtle text-warning border-warning/15',
+    danger: 'bg-danger-subtle text-danger border-danger/15',
+    info: 'bg-info-subtle text-info border-info/15',
   };
 
   return (

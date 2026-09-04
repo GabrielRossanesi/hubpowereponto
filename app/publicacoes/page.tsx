@@ -7,6 +7,7 @@ import { getClients, getTenantMembers } from '../clientes/actions';
 import { getRealPublications } from './actions';
 import PublicacoesPageClient from './PublicacoesPageClient';
 import PublicacoesSandboxClient from './PublicacoesSandboxClient';
+import { measureServerTiming } from '../../lib/performance';
 
 export default async function PublicacoesPage() {
   if (!isDatabaseDataMode) {
@@ -16,11 +17,14 @@ export default async function PublicacoesPage() {
 
   // Produção: uma única resolução de sessão/tenant (memoizada) alimenta as três
   // buscas em paralelo, entregues como props prontas ao componente cliente.
-  const [clients, members, publications] = await Promise.all([
-    getClients(false),
-    getTenantMembers(),
-    getRealPublications(),
-  ]);
+  const [clients, members, publications] = await measureServerTiming(
+    'publications/data-total',
+    () => Promise.all([
+      getClients(false),
+      getTenantMembers(),
+      getRealPublications(),
+    ]),
+  );
 
   return (
     <PublicacoesPageClient

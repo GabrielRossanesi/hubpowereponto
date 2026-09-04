@@ -7,6 +7,8 @@ import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import crypto from 'crypto';
 import type { Publication, PublicApprovalPublication } from '../../types';
 import { Publication as PrismaPublication } from '@prisma/client';
+import { measureServerTiming } from '../../lib/performance';
+import { getCurrentDatabaseTenantContext } from '../../lib/tenant-context-actions';
 
 // Colunas seguras para servir na rota pública de aprovação (sem login).
 // Mantém a lista explícita para nunca vazar organizationId, clientId,
@@ -236,17 +238,23 @@ export async function getRealPublications(): Promise<Publication[]> {
   if (!isDatabaseDataMode) return [];
 
   try {
-    const activeOrgId = await getActiveOrganizationId();
-    await validateTenantAccess(activeOrgId);
+    const tenantContext = await getCurrentDatabaseTenantContext();
+    if (!tenantContext) throw new Error('Unauthorized tenant context.');
+    if (tenantContext.features.publications === false) {
+      throw new Error('Publications module is disabled for this organization.');
+    }
+    const activeOrgId = tenantContext.organization.id;
 
-    const dbPubs = await prisma.publication.findMany({
-      where: {
-        organizationId: activeOrgId,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+    const dbPubs = await measureServerTiming('publications/query', () =>
+      prisma.publication.findMany({
+        where: {
+          organizationId: activeOrgId,
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+      }),
+    );
 
     return dbPubs.map(mapDbPubToPub);
   } catch (err) {

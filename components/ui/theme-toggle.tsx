@@ -3,7 +3,7 @@
 import React from 'react';
 import { Sun, Moon } from 'lucide-react';
 import { useTheme } from './theme-provider';
-import Button from './button';
+import IconButton from './icon-button';
 import { useMounted } from '../../hooks/useMounted';
 
 export function ThemeToggle() {
@@ -12,27 +12,24 @@ export function ThemeToggle() {
 
   if (!mounted) {
     return (
-      <Button variant="ghost" size="sm" className="h-9 w-9 p-0 rounded-lg border border-border/40">
-        <span className="sr-only">Carregando tema</span>
-      </Button>
+      <span className="block h-9 w-9 rounded-md border border-border bg-surface-subtle" aria-hidden="true" />
     );
   }
 
   return (
-    <Button
+    <IconButton
       variant="ghost"
       size="sm"
-      className="h-9 w-9 p-0 rounded-lg border border-border/40 hover:bg-muted"
+      className="rounded-md border border-border bg-surface-subtle text-foreground-muted shadow-subtle hover:border-border-strong hover:bg-surface hover:text-primary"
       onClick={toggleTheme}
-      title={theme === 'dark' ? 'Mudar para Tema Claro' : 'Mudar para Tema Escuro'}
+      label={theme === 'dark' ? 'Usar tema claro' : 'Usar tema escuro'}
     >
       {theme === 'dark' ? (
-        <Sun className="h-[1.2rem] w-[1.2rem] text-amber-400 rotate-0 scale-100 transition-all" />
+        <Sun className="h-4 w-4" aria-hidden="true" />
       ) : (
-        <Moon className="h-[1.2rem] w-[1.2rem] text-indigo-600 rotate-0 scale-100 transition-all" />
+        <Moon className="h-4 w-4" aria-hidden="true" />
       )}
-      <span className="sr-only">Alternar tema</span>
-    </Button>
+    </IconButton>
   );
 }
 

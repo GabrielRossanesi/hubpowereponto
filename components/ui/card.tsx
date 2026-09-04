@@ -2,12 +2,19 @@ import React from 'react';
 
 export interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
   hoverable?: boolean;
+  variant?: 'default' | 'panel' | 'flat';
 }
 
-export function Card({ className = '', hoverable, children, ...props }: CardProps) {
+export function Card({ className = '', hoverable, variant = 'default', children, ...props }: CardProps) {
+  const variants = {
+    default: 'rounded-xl border border-border/40 bg-card text-card-foreground shadow-sm',
+    panel: 'rounded-lg border border-border bg-surface text-foreground shadow-subtle',
+    flat: 'rounded-lg border border-border bg-surface-subtle text-foreground',
+  };
+
   return (
     <div
-      className={`rounded-xl border border-border/40 bg-card text-card-foreground shadow-sm transition-all duration-300 ${
+      className={`${variants[variant]} transition-[border-color,box-shadow,transform] duration-200 ${
         hoverable
           ? 'hover:shadow-[0_12px_24px_-10px_rgba(0,0,0,0.15)] dark:hover:shadow-[0_12px_24px_-10px_rgba(0,0,0,0.6)] hover:-translate-y-0.5 hover:border-primary/45 cursor-pointer'
           : ''

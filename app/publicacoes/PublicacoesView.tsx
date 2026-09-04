@@ -558,7 +558,7 @@ export default function PublicacoesView({
         </Card>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredPubs.map((pub) => {
+          {filteredPubs.map((pub, index) => {
             const isExpired = pub.approvalLinkExpiresAt && new Date(pub.approvalLinkExpiresAt) < new Date();
 
             const images = pub.images?.length
@@ -593,6 +593,9 @@ export default function PublicacoesView({
                         src={images[0] || pub.imageUrl}
                         alt="Social media post visual creative"
                         className="w-full h-full object-cover"
+                        loading={index < 2 ? 'eager' : 'lazy'}
+                        fetchPriority={index === 0 ? 'high' : 'auto'}
+                        decoding="async"
                         onError={() => {
                           const url = images[0] || pub.imageUrl;
                           setBrokenImages(prev => ({ ...prev, [url]: true }));

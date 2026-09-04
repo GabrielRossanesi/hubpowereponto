@@ -1,21 +1,35 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
-  LayoutDashboard, Users, FileText, Briefcase,
-  CreditCard, UserPlus, Megaphone, CheckSquare,
-  History, Settings, X, Building2, Target, ChevronLeft, ChevronRight,
-  Landmark
+  Briefcase,
+  Building2,
+  CheckSquare,
+  CreditCard,
+  FileText,
+  History,
+  Landmark,
+  LayoutDashboard,
+  Megaphone,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Settings,
+  Target,
+  UserPlus,
+  Users,
+  X,
 } from 'lucide-react';
-import Button from '../ui/button';
-import { useTenantStore, getPlanDefaultFeatures } from '../../lib/store';
+import IconButton from '../ui/icon-button';
+import { useStore, getPlanDefaultFeatures } from '../../lib/store';
 import { useMounted } from '../../hooks/useMounted';
 import { useDatabaseTenantContext } from '../../hooks/useDatabaseTenantContext';
 import { isDatabaseDataMode } from '../../lib/data-mode';
-import { useSession } from '../../lib/auth-client';
 import { LogoSidebar } from '../ui/logo';
+import AccountMenu from './account-menu';
+import WorkspaceSwitcher from './workspace-switcher';
 
 interface MenuItem {
   label: string;
@@ -28,365 +42,346 @@ interface MenuItem {
 interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
+  triggerRef: React.RefObject<HTMLButtonElement | null>;
 }
 
-export function Sidebar({ isOpen, onClose }: SidebarProps) {
+interface NavigationTooltipState {
+  label: string;
+  top: number;
+}
+
+const desktopMediaQuery = '(min-width: 1024px)';
+
+function subscribeToDesktop(callback: () => void) {
+  const query = window.matchMedia(desktopMediaQuery);
+  query.addEventListener('change', callback);
+  return () => query.removeEventListener('change', callback);
+}
+
+function getDesktopSnapshot() {
+  return window.matchMedia(desktopMediaQuery).matches;
+}
+
+function getServerDesktopSnapshot() {
+  return false;
+}
+
+const menuGroups: { title: string; items: MenuItem[] }[] = [
+  {
+    title: 'Comercial',
+    items: [
+      { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
+      { label: 'Leads', href: '/leads', icon: Target, feature: 'leads' },
+      { label: 'Clientes', href: '/clientes', icon: Users, feature: 'clients' },
+      { label: 'Propostas', href: '/propostas', icon: FileText, feature: 'proposals' },
+      { label: 'Contratos', href: '/contratos', icon: Briefcase, feature: 'contracts' },
+      { label: 'Cobranças', href: '/cobrancas', icon: CreditCard, feature: 'charges' },
+    ],
+  },
+  {
+    title: 'Operações',
+    items: [
+      { label: 'Onboarding', href: '/onboarding', icon: UserPlus, feature: 'onboarding' },
+      { label: 'Publicações', href: '/publicacoes', icon: Megaphone, feature: 'publications' },
+      { label: 'Tarefas', href: '/tarefas', icon: CheckSquare, feature: 'tasks' },
+      { label: 'Histórico', href: '/historico', icon: History, feature: 'history' },
+    ],
+  },
+  {
+    title: 'Gestão',
+    items: [
+      { label: 'Financeiro', href: '/financeiro', icon: Landmark, feature: 'financial' },
+      { label: 'Configurações', href: '/configuracoes', icon: Settings },
+    ],
+  },
+  {
+    title: 'Administração',
+    items: [{ label: 'Empresas', href: '/empresas', icon: Building2, isOperator: true }],
+  },
+];
+
+export function Sidebar({ isOpen, onClose, triggerRef }: SidebarProps) {
   const pathname = usePathname();
-  const store = useTenantStore();
+  const storedSidebarCollapsed = useStore(state => state.isSidebarCollapsed);
+  const sandboxCurrentOrganizationId = useStore(state => state.currentOrganizationId);
+  const sandboxOrganizations = useStore(state => state.organizations);
+  const sandboxFeatureList = useStore(state => state.organizationFeatures);
+  const sandboxCurrentUser = useStore(state => state.currentUser);
+  const sandboxTeamMembers = useStore(state => state.teamMembers);
+  const setCurrentOrganizationId = useStore(state => state.setCurrentOrganizationId);
+  const toggleSidebar = useStore(state => state.toggleSidebar);
   const hasMounted = useMounted();
   const { context: databaseTenantContext } = useDatabaseTenantContext();
-  const { data: session } = useSession();
-  const isDatabaseMode = isDatabaseDataMode;
+  const isDesktop = useSyncExternalStore(subscribeToDesktop, getDesktopSnapshot, getServerDesktopSnapshot);
+  const showCompact = isDesktop && storedSidebarCollapsed;
+  const panelRef = useRef<HTMLElement>(null);
+  const mobileCloseRef = useRef<HTMLButtonElement>(null);
+  const [navigationTooltip, setNavigationTooltip] = useState<NavigationTooltipState | null>(null);
 
-  const [orgDropdownOpen, setOrgDropdownOpen] = useState(false);
-
-  // Grouped menu items as requested
-  const menuGroups: { title: string; items: MenuItem[] }[] = [
-    {
-      title: 'Comercial',
-      items: [
-        { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-        { label: 'Leads', href: '/leads', icon: Target, feature: 'leads' },
-        { label: 'Clientes', href: '/clientes', icon: Users, feature: 'clients' },
-        { label: 'Propostas', href: '/propostas', icon: FileText, feature: 'proposals' },
-        { label: 'Contratos', href: '/contratos', icon: Briefcase, feature: 'contracts' },
-        { label: 'Cobranças', href: '/cobrancas', icon: CreditCard, feature: 'charges' },
-        { label: 'Financeiro', href: '/financeiro', icon: Landmark, feature: 'financial' },
-      ]
-    },
-    {
-      title: 'Operação',
-      items: [
-        { label: 'Onboarding', href: '/onboarding', icon: UserPlus, feature: 'onboarding' },
-        { label: 'Publicações', href: '/publicacoes', icon: Megaphone, feature: 'publications' },
-        { label: 'Tarefas', href: '/tarefas', icon: CheckSquare, feature: 'tasks' },
-        { label: 'Histórico', href: '/historico', icon: History, feature: 'history' },
-      ]
-    },
-    {
-      title: 'Sistema',
-      items: [
-        { label: 'Configurações', href: '/configuracoes', icon: Settings },
-      ]
-    },
-    {
-      title: 'Operador',
-      items: [
-        { label: 'Empresas', href: '/empresas', icon: Building2, isOperator: true }
-      ]
-    }
-  ];
-
-  // Stable server defaults to prevent hydration mismatch
-  const isSidebarCollapsed = hasMounted ? store.isSidebarCollapsed : false;
-  const currentOrganizationId = hasMounted
-    ? (isDatabaseMode ? databaseTenantContext?.organization.id || '' : store.currentOrganizationId)
-    : 'org_hub_power';
-  const currentFeatures = hasMounted
-    ? (isDatabaseMode ? databaseTenantContext?.features || getPlanDefaultFeatures('pro') : store.currentFeatures)
-    : getPlanDefaultFeatures('pro');
+  const sandboxOrganization = sandboxOrganizations.find(org => org.id === sandboxCurrentOrganizationId);
+  const sandboxFeatures = sandboxFeatureList.find(features => features.organizationId === sandboxCurrentOrganizationId) ?? {
+    organizationId: sandboxCurrentOrganizationId,
+    ...getPlanDefaultFeatures(sandboxOrganization?.planId ?? 'starter'),
+  };
+  const currentOrganizationId = isDatabaseDataMode
+    ? databaseTenantContext?.organization.id || ''
+    : (hasMounted ? sandboxCurrentOrganizationId : 'org_hub_power');
+  const currentFeatures = isDatabaseDataMode
+    ? databaseTenantContext?.features || getPlanDefaultFeatures('pro')
+    : (hasMounted ? sandboxFeatures : getPlanDefaultFeatures('pro'));
   const sandboxUser = hasMounted
-    ? store.currentUser
-    : store.teamMembers?.find(m => m.organizationId === 'org_hub_power') || store.teamMembers?.[0];
-  const organizations = isDatabaseMode
+    ? sandboxCurrentUser
+    : sandboxTeamMembers.find(member => member.organizationId === 'org_hub_power') || sandboxTeamMembers[0];
+  const organizations = isDatabaseDataMode
     ? (databaseTenantContext ? [databaseTenantContext.organization] : [])
-    : store.organizations || [];
-  const toggleSidebar = store.toggleSidebar;
-  const setCurrentOrganizationId = store.setCurrentOrganizationId;
-  const displayUserName = isDatabaseMode
-    ? session?.user?.name || 'Usuário'
+    : sandboxOrganizations;
+  const currentOrganization = organizations.find(org => org.id === currentOrganizationId) || organizations[0];
+  const displayUserName = isDatabaseDataMode
+    ? databaseTenantContext?.userName || 'Usuário'
     : sandboxUser?.name || 'Usuário';
-  const displayUserRole = isDatabaseMode
-    ? databaseTenantContext?.membershipRole || 'member'
+  const displayUserRole = isDatabaseDataMode
+    ? databaseTenantContext?.membershipRole || 'Membro'
     : sandboxUser?.role || 'Membro';
-  const displayUserPermission = isDatabaseMode
+  const displayUserPermission = isDatabaseDataMode
     ? databaseTenantContext?.membershipRole
     : sandboxUser?.userRole;
   const displayUserInitials = displayUserName
     .split(' ')
-    .map((part) => part[0])
+    .map(part => part[0])
     .join('')
     .slice(0, 2)
     .toUpperCase() || 'US';
 
-  // Filter items based on features active in the tenant's plan and operator permissions
-  const filterMenuItems = (items: MenuItem[]) => {
-    return items.filter(item => {
-      if (item.feature) {
-        const key = item.feature as keyof Omit<typeof currentFeatures, 'organizationId'>;
-        if (currentFeatures && currentFeatures[key] === false) return false;
-      }
+  const closeMobileNavigation = useCallback(() => {
+    setNavigationTooltip(null);
+    if (isDesktop) return;
+    onClose();
+    requestAnimationFrame(() => triggerRef.current?.focus());
+  }, [isDesktop, onClose, triggerRef]);
 
-      if (item.isOperator) {
-        if (isDatabaseMode) {
-          const platformRole = databaseTenantContext?.platformRole;
-          return platformRole === 'operator' || platformRole === 'platform_admin';
-        }
-        return true;
-      }
-
-      return true;
-    });
+  const toggleSidebarPreference = () => {
+    const nextCollapsedState = !useStore.getState().isSidebarCollapsed;
+    document.documentElement.dataset.sidebarCollapsed = String(nextCollapsedState);
+    setNavigationTooltip(null);
+    toggleSidebar();
   };
 
-  const currentOrg = (organizations || []).find(o => o.id === currentOrganizationId) || organizations?.[0];
-  const orgInitials = currentOrg?.name
-    ? currentOrg.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
-    : 'NV';
+  useEffect(() => {
+    if (!isOpen || isDesktop) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    requestAnimationFrame(() => mobileCloseRef.current?.focus());
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeMobileNavigation();
+        return;
+      }
+
+      if (event.key !== 'Tab' || !panelRef.current) return;
+      const focusableElements = Array.from(
+        panelRef.current.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter(element => element.getClientRects().length > 0);
+      if (focusableElements.length === 0) return;
+
+      const first = focusableElements[0];
+      const last = focusableElements[focusableElements.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [closeMobileNavigation, isDesktop, isOpen]);
+
+  const filterMenuItems = (items: MenuItem[]) => items.filter(item => {
+    if (item.feature) {
+      const key = item.feature as keyof Omit<typeof currentFeatures, 'organizationId'>;
+      if (currentFeatures[key] === false) return false;
+    }
+
+    if (item.isOperator && isDatabaseDataMode) {
+      return databaseTenantContext?.platformRole === 'operator' || databaseTenantContext?.platformRole === 'platform_admin';
+    }
+
+    return true;
+  });
+
+  const showTooltip = (element: HTMLElement, label: string) => {
+    if (!showCompact) return;
+    const rect = element.getBoundingClientRect();
+    setNavigationTooltip({ label, top: rect.top + rect.height / 2 });
+  };
 
   return (
     <>
-      {/* Mobile Backdrop */}
-      {isOpen && (
+      {isOpen && !isDesktop && (
         <div
-          className="fixed inset-0 bg-black/70 z-40 lg:hidden backdrop-blur-sm transition-opacity"
-          onClick={onClose}
+          className="fixed inset-0 z-40 bg-black/55"
+          aria-hidden="true"
+          onMouseDown={closeMobileNavigation}
         />
       )}
 
-      {/* Sidebar Container */}
       <aside
-        className={`fixed top-0 bottom-0 left-0 z-45 border-r border-border/40 bg-card text-foreground flex flex-col transition-all duration-300 ease-in-out lg:translate-x-0 lg:h-full lg:relative ${
+        id="nvhub-sidebar"
+        ref={panelRef}
+        aria-label="Navegação principal"
+        aria-hidden={!isDesktop && !isOpen}
+        inert={!isDesktop && !isOpen}
+        className={`fixed inset-y-0 left-0 z-50 flex w-64 flex-col overflow-x-hidden border-r border-border/80 bg-shell-sidebar shadow-elevated transition-[transform,width] duration-200 ease-out lg:relative lg:translate-x-0 lg:shadow-none ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
-        } ${isSidebarCollapsed ? 'lg:w-[76px]' : 'lg:w-64 w-64'}`}
+        } ${showCompact ? 'lg:w-18' : 'lg:w-64'}`}
       >
-        {/* Toggle Sidebar Button (Desktop Only) */}
-        <div className="hidden lg:block absolute top-1/2 -right-3 -translate-y-1/2 z-50 group">
-          <button
-            type="button"
-            onClick={() => toggleSidebar?.()}
-            className="h-6 w-6 rounded-full border border-border/40 bg-card text-foreground shadow-lg hover:bg-muted flex items-center justify-center cursor-pointer transition-all hover:scale-105 active:scale-95 focus:outline-none"
-          >
-            {isSidebarCollapsed ? (
-              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
-            ) : (
-              <ChevronLeft className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
-            )}
-          </button>
-          {/* Tooltip */}
-          <div className="absolute left-full ml-3 top-1/2 -translate-y-1/2 px-2.5 py-1.5 bg-card/95 backdrop-blur-md text-card-foreground text-[10px] font-bold rounded-lg border border-border/30 shadow-2xl whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 ease-out transform scale-90 -translate-x-1 group-hover:scale-100 group-hover:translate-x-0 z-50">
-            {isSidebarCollapsed ? "Expandir Menu" : "Recolher Menu"}
-          </div>
-        </div>
+        <span className={`nv-brand-signal absolute left-0 top-0 h-0.5 ${showCompact ? 'w-18' : 'w-24'}`} aria-hidden="true" />
 
-        {/* Header Logo */}
-        <div className={`h-16 flex items-center justify-between border-b border-border/25 shrink-0 ${
-          isSidebarCollapsed ? 'justify-center px-0 relative group' : 'px-6'
-        }`}>
-          <Link href="/dashboard" className="flex items-center" onClick={onClose}>
-            <LogoSidebar isCollapsed={isSidebarCollapsed} />
+        <div
+          id="nvhub-sidebar-header"
+          className={`flex h-[4.25rem] shrink-0 items-center justify-between border-b border-border/80 ${showCompact ? 'px-0' : 'px-4'}`}
+        >
+          <Link
+            id="nvhub-sidebar-brand-link"
+            href="/dashboard"
+            onClick={closeMobileNavigation}
+            aria-label="Ir para o Dashboard"
+            className="shrink-0 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+          >
+            <LogoSidebar isCollapsed={showCompact} />
           </Link>
-          {isSidebarCollapsed && (
-            <div className="absolute left-full ml-3 top-1/2 -translate-y-1/2 px-2.5 py-1.5 bg-card/95 backdrop-blur-md text-card-foreground text-[10px] font-bold rounded-lg border border-border/30 shadow-2xl whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 ease-out transform scale-90 -translate-x-1 group-hover:scale-100 group-hover:translate-x-0 z-50">
-              NV Hub <span className="text-primary font-semibold ml-1">Dashboard</span>
-            </div>
-          )}
-          {!isSidebarCollapsed && (
-            <Button
+          <IconButton
+            id="nvhub-sidebar-toggle"
+            variant="ghost"
+            size="sm"
+            className={`hidden rounded-md border border-border text-foreground-muted hover:border-border-strong hover:bg-surface-subtle hover:text-foreground lg:inline-flex ${showCompact ? 'h-9 w-9' : 'h-9 w-9'}`}
+            label={storedSidebarCollapsed ? 'Expandir navegação' : 'Recolher navegação'}
+            aria-controls="nvhub-sidebar-navigation"
+            aria-expanded={!storedSidebarCollapsed}
+            onClick={toggleSidebarPreference}
+          >
+            {storedSidebarCollapsed
+              ? <PanelLeftOpen className="h-4 w-4" aria-hidden="true" />
+              : <PanelLeftClose className="h-4 w-4" aria-hidden="true" />}
+          </IconButton>
+          {!isDesktop && (
+            <IconButton
+              ref={mobileCloseRef}
               variant="ghost"
               size="sm"
-              className="h-8 w-8 p-0 rounded-full lg:hidden hover:bg-muted/40"
-              onClick={onClose}
+              className="rounded-md text-foreground-muted lg:hidden"
+              label="Fechar menu principal"
+              onClick={closeMobileNavigation}
             >
-              <X className="h-4 w-4 text-muted-foreground" />
-            </Button>
+              <X className="h-4 w-4" aria-hidden="true" />
+            </IconButton>
           )}
         </div>
 
-        {/* Organization Switcher Dropdown (Simulator) */}
-        <div className={`shrink-0 border-b border-border/25 ${isSidebarCollapsed ? 'py-4' : 'px-4 py-4 bg-muted/10'}`}>
-          {isSidebarCollapsed ? (
-            <div className="relative group flex justify-center w-full">
-              <button
-                type="button"
-                onClick={() => setOrgDropdownOpen(!orgDropdownOpen)}
-                className="h-10 w-10 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 flex items-center justify-center font-bold text-xs border border-primary/20 shadow-sm cursor-pointer transition-all duration-150 focus:outline-none"
-              >
-                {orgInitials}
-              </button>
-              {/* Tooltip */}
-              <div className="absolute left-full ml-3 top-1/2 -translate-y-1/2 px-2.5 py-1.5 bg-card/95 backdrop-blur-md text-card-foreground text-[10px] font-bold rounded-lg border border-border/30 shadow-2xl whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 ease-out transform scale-90 -translate-x-1 group-hover:scale-100 group-hover:translate-x-0 z-50">
-                {currentOrg?.name}
-                {!isDatabaseMode && <span className="text-primary/80 font-normal ml-0.5">(Simulador)</span>}
-              </div>
-
-              {/* Floating Dropdown List */}
-              {orgDropdownOpen && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setOrgDropdownOpen(false)} />
-                  <div className="absolute left-full ml-2 top-0 w-52 bg-card border border-border/40 rounded-xl shadow-2xl py-1.5 z-50 animate-in fade-in slide-in-from-left-2 duration-150 backdrop-blur-md">
-                    <div className="px-3 py-1.5 text-[8px] font-bold text-muted-foreground uppercase tracking-widest border-b border-border/20 select-none">
-                      Mudar Organização
-                    </div>
-                    {organizations.map((org) => (
-                      <button
-                        key={org.id}
-                        type="button"
-                        onClick={() => {
-                          if (isDatabaseMode) return;
-                          setCurrentOrganizationId?.(org.id);
-                          setOrgDropdownOpen(false);
-                        }}
-                        className={`w-full text-left px-3 py-2 text-xs font-semibold hover:bg-muted/50 flex items-center justify-between cursor-pointer transition-colors ${
-                          org.id === currentOrganizationId ? 'text-primary bg-primary/5' : 'text-foreground/90'
-                        }`}
-                      >
-                        <span className="truncate">{org.name}</span>
-                        {org.id === currentOrganizationId && <span className="h-1.5 w-1.5 rounded-full bg-primary" />}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          ) : (
-            <div className="space-y-1.5">
-              <div className="flex items-center gap-1.5 px-1.5 text-[8px] font-bold text-primary uppercase tracking-widest select-none">
-                <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
-                {isDatabaseMode ? 'Organização ativa' : 'Simulador de Tenant'}
-              </div>
-              <div className="relative">
-                <select
-                  value={currentOrganizationId || ''}
-                  onChange={(e) => {
-                    if (!isDatabaseMode) {
-                      setCurrentOrganizationId?.(e.target.value);
-                    }
-                  }}
-                  disabled={isDatabaseMode}
-                  className="w-full h-8.5 pl-2.5 pr-8 rounded-lg bg-background/50 border border-border/40 text-xs font-bold text-foreground/80 focus:outline-none focus:ring-1 focus:ring-primary/45 focus:border-primary/40 cursor-pointer transition-all"
-                  title="Alternar Organização Assinante"
-                >
-                  {(organizations || []).map((org) => (
-                    <option key={org?.id || ''} value={org?.id || ''}>
-                      {org?.name || 'Organização'}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          )}
+        <div id="nvhub-sidebar-workspace" className={`shrink-0 border-b border-border/80 ${showCompact ? 'p-3' : 'px-3 py-4'}`}>
+          <WorkspaceSwitcher
+            organizations={organizations}
+            currentOrganization={currentOrganization}
+            isCollapsed={showCompact}
+            canSwitch={!isDatabaseDataMode && organizations.length > 1}
+            onChange={setCurrentOrganizationId}
+          />
         </div>
 
-        {/* Navigation Links */}
-        <nav className={`flex-1 py-4 space-y-5 overflow-x-hidden ${isSidebarCollapsed ? 'px-0' : 'px-3 overflow-y-auto'}`}>
-          {menuGroups.map((group, groupIdx) => {
-            const filteredItems = filterMenuItems(group.items);
-            if (filteredItems.length === 0) return null;
+        <nav id="nvhub-sidebar-navigation" className={`min-h-0 flex-1 overflow-y-auto py-4 ${showCompact ? 'px-2' : 'px-3'}`}>
+          <div className={showCompact ? 'space-y-2' : 'space-y-4'}>
+            {menuGroups.map((group, groupIndex) => {
+              const items = filterMenuItems(group.items);
+              if (items.length === 0) return null;
 
-            return (
-              <div key={group.title + '-' + groupIdx} className="space-y-1">
-                {/* Group title or separator */}
-                {!isSidebarCollapsed ? (
-                  <div className="px-3 py-1 text-[8px] font-bold text-muted-foreground/70 uppercase tracking-[0.16em] select-none">
-                    {group.title}
-                  </div>
-                ) : (
-                  groupIdx > 0 && <div className="h-px bg-border/20 mx-3 my-2" />
-                )}
+              return (
+                <div key={group.title}>
+                  {!showCompact && (
+                    <p className="nv-sidebar-expanded-only mb-1.5 px-2.5 text-[0.625rem] font-semibold uppercase tracking-[0.17em] text-foreground-muted">
+                      {group.title}
+                    </p>
+                  )}
+                  {showCompact && groupIndex > 0 && <div className="mx-2 mb-2 h-px bg-border" aria-hidden="true" />}
+                  <div className="space-y-0.5">
+                    {items.map(item => {
+                      const Icon = item.icon;
+                      const isActive = pathname?.startsWith(item.href) ?? false;
 
-                {/* Group items */}
-                <div className="space-y-0.5">
-                  {filteredItems.map((item, idx) => {
-                    const Icon = item.icon || Target;
-                    const itemHref = item.href || '#';
-                    const isActive = hasMounted && itemHref !== '#' && pathname && pathname.startsWith(itemHref);
-
-                    return (
-                      <div key={(item.href || '#') + '-' + idx} className="relative group flex justify-center w-full">
-                        <Link
-                          href={itemHref}
-                          onClick={onClose}
-                          className={`flex items-center gap-3 py-2.5 rounded-lg text-xs font-bold transition-all relative ${
-                            isSidebarCollapsed
-                              ? 'justify-center w-10 h-10 p-0'
-                              : 'px-3 w-full'
-                          } ${
-                            isActive
-                              ? isSidebarCollapsed
-                                ? 'bg-primary/10 text-primary border border-primary/20 shadow-[0_0_12px_rgba(223,177,91,0.12)]'
-                                : 'bg-gradient-to-r from-primary/10 via-primary/5 to-transparent text-primary border-l-[3px] border-primary pl-2.5 rounded-l-none rounded-r-lg dark:shadow-[inset_1px_0_0_rgba(223,177,91,0.1)]'
-                              : 'text-muted-foreground hover:text-foreground hover:bg-muted/30 pl-3'
-                          }`}
-                        >
-                          <Icon className={`h-4.5 w-4.5 shrink-0 transition-transform duration-200 group-hover:scale-105 ${
-                            isActive ? 'text-primary' : 'text-muted-foreground/80 group-hover:text-foreground'
-                          }`} />
-                          
-                          {!isSidebarCollapsed && (
-                            <span className="flex-1 truncate">{item.label}</span>
-                          )}
-
-                          {/* Admin tag inside sidebar link */}
-                          {item.isOperator && !isSidebarCollapsed && (
-                            <span className="bg-primary/15 text-primary border border-primary/20 text-[7.5px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider scale-95 origin-right">
-                              Admin
+                      return (
+                        <div key={item.href} className="group relative">
+                          <Link
+                            href={item.href}
+                            onClick={closeMobileNavigation}
+                            onMouseEnter={event => showTooltip(event.currentTarget, item.label)}
+                            onMouseLeave={() => setNavigationTooltip(null)}
+                            onFocus={event => showTooltip(event.currentTarget, item.label)}
+                            onBlur={() => setNavigationTooltip(null)}
+                            aria-label={showCompact ? item.label : undefined}
+                            aria-current={isActive ? 'page' : undefined}
+                            aria-describedby={showCompact ? 'sidebar-navigation-tooltip' : undefined}
+                            className={`nv-sidebar-item relative flex h-11 items-center rounded-lg text-body-small font-medium transition-[background-color,color,box-shadow] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 ${
+                              showCompact ? 'justify-center px-0' : 'gap-3 px-2.5'
+                            } ${
+                              isActive
+                                ? 'nv-nav-active text-foreground before:absolute before:inset-y-2.5 before:left-0 before:w-0.5 before:rounded-full before:bg-primary'
+                                : 'text-foreground-secondary hover:bg-surface/60 hover:text-foreground'
+                            }`}
+                          >
+                            <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-[background-color,color,box-shadow] ${
+                              isActive
+                                ? 'bg-surface-elevated text-primary shadow-subtle'
+                                : 'text-foreground-muted group-hover:bg-surface-subtle group-hover:text-foreground-secondary'
+                            }`}>
+                              <Icon className="h-5 w-5" aria-hidden="true" />
                             </span>
-                          )}
-                        </Link>
-
-                        {/* Tooltip for collapsed sidebar */}
-                        {isSidebarCollapsed && (
-                          <div className="absolute left-full ml-3 top-1/2 -translate-y-1/2 px-2.5 py-1.5 bg-card/95 backdrop-blur-md text-card-foreground text-[10px] font-bold rounded-lg border border-border/30 shadow-2xl whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 ease-out transform scale-90 -translate-x-1 group-hover:scale-100 group-hover:translate-x-0 z-50 flex items-center gap-1.5">
-                            {isActive && <span className="h-1 w-1 rounded-full bg-primary" />}
-                            <span>{item.label}</span>
-                            {item.isOperator && (
-                              <span className="text-[7px] text-primary/80 border border-primary/20 px-1 rounded uppercase tracking-widest font-black">
-                                Admin
-                              </span>
+                            {!showCompact && <span className="nv-sidebar-expanded-only min-w-0 flex-1 truncate">{item.label}</span>}
+                            {!showCompact && item.isOperator && (
+                              <span className="nv-sidebar-expanded-only rounded-sm bg-primary-subtle px-1.5 py-0.5 text-[0.5625rem] font-bold uppercase tracking-wide text-primary">Admin</span>
                             )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                          </Link>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </nav>
 
-        {/* Footer info */}
-        <div className="p-4 border-t border-border/25 shrink-0 flex justify-center bg-muted/5">
-          {isSidebarCollapsed ? (
-            <div className="relative group">
-              <div className="h-9 w-9 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center font-bold text-primary text-xs uppercase shrink-0 hover:scale-105 transition-transform cursor-pointer">
-                {displayUserInitials}
-              </div>
-
-              {/* Tooltip info */}
-              <div className="absolute left-full ml-3 bottom-0 px-3 py-2 bg-card/95 backdrop-blur-md text-card-foreground text-[10px] font-bold rounded-lg border border-border/30 shadow-2xl opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 ease-out transform scale-90 -translate-x-1 group-hover:scale-100 group-hover:translate-x-0 z-50 min-w-44">
-                <div className="text-foreground font-black text-xs leading-none">{displayUserName}</div>
-                <div className="text-muted-foreground text-[9px] font-bold leading-normal mt-1 flex items-center gap-1.5">
-                  <span>{displayUserRole}</span>
-                  {displayUserPermission === 'admin' && (
-                    <span className="text-[7.5px] text-primary bg-primary/10 border border-primary/20 px-1 rounded uppercase font-black tracking-wider">
-                      {displayUserPermission}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center gap-3 px-2 py-2 rounded-xl bg-muted/15 border border-border/10 w-full animate-in fade-in duration-200">
-              <div className="h-9 w-9 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center font-black text-primary text-xs uppercase shrink-0 select-none">
-                {displayUserInitials}
-              </div>
-              <div className="flex flex-col min-w-0">
-                <span className="text-xs font-black truncate text-foreground/90 leading-none">{displayUserName}</span>
-                <span className="text-[9px] text-muted-foreground truncate leading-tight mt-1 flex items-center gap-1">
-                  {displayUserRole}
-                </span>
-              </div>
-              {displayUserPermission === 'admin' && (
-                <span className="ml-auto bg-primary/10 text-primary border border-primary/20 text-[8px] font-black px-1.5 py-0.5 rounded uppercase tracking-wider scale-90 select-none">
-                  Admin
-                </span>
-              )}
-            </div>
-          )}
+        <div id="nvhub-sidebar-account" className="shrink-0 border-t border-border/80 bg-shell-sidebar p-3">
+          <AccountMenu
+            name={displayUserName}
+            role={displayUserRole}
+            initials={displayUserInitials}
+            isAdmin={displayUserPermission === 'admin'}
+            isCollapsed={showCompact}
+            onNavigate={closeMobileNavigation}
+          />
         </div>
       </aside>
+
+      {showCompact && navigationTooltip && hasMounted && createPortal(
+        <div
+          id="sidebar-navigation-tooltip"
+          role="tooltip"
+          className="pointer-events-none fixed left-20 z-[70] -translate-y-1/2 rounded-md border border-border-strong/70 bg-surface-elevated px-2.5 py-1.5 text-label font-medium text-foreground shadow-elevated"
+          style={{ top: navigationTooltip.top }}
+        >
+          {navigationTooltip.label}
+        </div>,
+        document.body,
+      )}
     </>
   );
 }

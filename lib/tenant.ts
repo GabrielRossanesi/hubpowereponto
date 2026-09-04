@@ -3,6 +3,7 @@ import { headers } from 'next/headers';
 import prisma from './prisma';
 import { auth } from './auth';
 import { isDatabaseDataMode } from './data-mode';
+import { measureServerTiming } from './performance';
 
 // Structure of returned session from helpers
 export interface TenantSession {
@@ -59,9 +60,11 @@ export const getSession = cache(async (): Promise<TenantSession | null> => {
   }
 
   try {
-    const sessionData = await auth.api.getSession({
-      headers: await headers(),
-    });
+    const sessionData = await measureServerTiming('auth/session', async () =>
+      auth.api.getSession({
+        headers: await headers(),
+      }),
+    );
 
     if (!sessionData) return null;
 
@@ -123,9 +126,13 @@ export const validateTenantAccess = cache(async (organizationId: string): Promis
         userId: session.user.id,
       },
     },
-    include: {
+    select: {
+      id: true,
+      role: true,
+      organizationId: true,
+      userId: true,
       organization: {
-        select: { id: true, isActive: true, archivedAt: true },
+        select: { isActive: true, archivedAt: true },
       },
     },
   });
@@ -229,10 +236,12 @@ export const getOrResolveActiveOrganizationId = cache(async (session: TenantSess
 
   // 1. If we already have an active org ID in the session, verify if it's still valid (not archived)
   if (currentActiveId) {
-    const org = await prisma.organization.findUnique({
-      where: { id: currentActiveId },
-      select: { id: true, isActive: true, archivedAt: true },
-    });
+    const org = await measureServerTiming('organization/active-validation', () =>
+      prisma.organization.findUnique({
+        where: { id: currentActiveId },
+        select: { id: true, isActive: true, archivedAt: true },
+      }),
+    );
 
     if (org && !org.archivedAt) {
       if (!org.isActive) {
@@ -243,22 +252,25 @@ export const getOrResolveActiveOrganizationId = cache(async (session: TenantSess
   }
 
   // 2. If it's missing or invalid/archived, find the first active, non-archived membership
-  const memberships = await prisma.member.findMany({
-    where: {
-      userId,
-      organization: {
-        archivedAt: null,
+  const memberships = await measureServerTiming('organization/membership-resolution', () =>
+    prisma.member.findMany({
+      where: {
+        userId,
+        organization: {
+          archivedAt: null,
+        },
       },
-    },
-    include: {
-      organization: {
-        select: { id: true, isActive: true, archivedAt: true },
+      select: {
+        organizationId: true,
+        organization: {
+          select: { isActive: true },
+        },
       },
-    },
-    orderBy: {
-      createdAt: 'asc',
-    },
-  });
+      orderBy: {
+        createdAt: 'asc',
+      },
+    }),
+  );
 
   // Filter out any suspended ones if we can, but if they are all suspended we will throw the suspended error
   const activeMemberships = memberships.filter(m => m.organization.isActive);
@@ -293,6 +305,7 @@ export const getOrResolveActiveOrganizationId = cache(async (session: TenantSess
     // For operators, if they don't have an active organization, we can default to the admin org
     const adminOrg = await prisma.organization.findFirst({
       where: { slug: 'nv-hub-admin', archivedAt: null },
+      select: { id: true },
     });
     if (adminOrg) {
       await prisma.session.update({

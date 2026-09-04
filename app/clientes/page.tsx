@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { Plus, Search, Filter, Eye, Building2, SearchCode, Edit3, Archive, RotateCcw } from 'lucide-react';
+import { Plus, Building2, SearchCode, Edit3, Archive, RotateCcw, ArrowRight, SlidersHorizontal, Mail, Phone } from 'lucide-react';
 import { useTenantStore } from '../../lib/store';
 import { useMounted } from '../../hooks/useMounted';
 import { PageHeader as UIHeader } from '../../components/ui/page-header';
@@ -11,13 +11,38 @@ import Input from '../../components/ui/input';
 import Textarea from '../../components/ui/textarea';
 import Select from '../../components/ui/select';
 import Modal from '../../components/ui/modal';
-import Card, { CardContent } from '../../components/ui/card';
 import Table, { TableHeader, TableBody, TableRow, TableHead, TableCell } from '../../components/ui/table';
 import StatusBadge from '../../components/ui/status-badge';
 import EmptyState from '../../components/ui/empty-state';
+import ErrorState from '../../components/ui/error-state';
+import PageLoadingSkeleton from '../../components/ui/page-loading-skeleton';
+import SearchInput from '../../components/ui/search-input';
+import TableToolbar from '../../components/ui/table-toolbar';
+import Dropdown from '../../components/ui/dropdown';
 import { ClientStatus, Client } from '../../types';
 import { isDatabaseDataMode } from '../../lib/data-mode';
 import { getClients, createClient, updateClient, archiveClient, restoreClient, getTenantMembers } from './actions';
+
+type ClientFilter = 'all' | ClientStatus;
+
+const clientStatusLabels: Record<ClientFilter, string> = {
+  all: 'Todos',
+  lead: 'Leads',
+  onboarding: 'Onboarding',
+  active: 'Ativos',
+  inactive: 'Inativos',
+  archived: 'Arquivados',
+};
+
+function getClientInitials(companyName: string) {
+  return companyName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(part => part[0])
+    .join('')
+    .toUpperCase() || 'CL';
+}
 
 export default function ClientesPage() {
   const mounted = useMounted();
@@ -30,10 +55,11 @@ export default function ClientesPage() {
   const [dbClients, setDbClients] = useState<Client[]>([]);
   const [dbMembers, setDbMembers] = useState<{ id: string; name: string }[]>([]);
   const [isLoading, setIsLoading] = useState(isDatabaseMode);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Common UI States
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<ClientFilter>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
 
@@ -55,6 +81,7 @@ export default function ClientesPage() {
   const loadClients = useCallback(async () => {
     if (!isDatabaseMode) return;
     try {
+      setLoadError(null);
       const [fetchedClients, fetchedMembers] = await Promise.all([
         getClients(true), // Include archived for client-side status filtering
         getTenantMembers(),
@@ -63,6 +90,7 @@ export default function ClientesPage() {
       setDbMembers(fetchedMembers);
     } catch (err) {
       console.error('Erro ao carregar dados do inquilino:', err);
+      setLoadError(err instanceof Error ? err.message : 'Não foi possível carregar a carteira de clientes.');
     } finally {
       setIsLoading(false);
     }
@@ -73,6 +101,7 @@ export default function ClientesPage() {
     if (isDatabaseMode) {
       const fetchInitial = async () => {
         try {
+          setLoadError(null);
           const [fetchedClients, fetchedMembers] = await Promise.all([
             getClients(true),
             getTenantMembers(),
@@ -84,7 +113,10 @@ export default function ClientesPage() {
           }
         } catch (err) {
           console.error('Erro ao carregar dados do inquilino inicialmente:', err);
-          if (active) setIsLoading(false);
+          if (active) {
+            setLoadError(err instanceof Error ? err.message : 'Não foi possível carregar a carteira de clientes.');
+            setIsLoading(false);
+          }
         }
       };
       fetchInitial();
@@ -95,11 +127,7 @@ export default function ClientesPage() {
   }, [isDatabaseMode]);
 
   if (!mounted || (isDatabaseMode && isLoading && dbClients.length === 0)) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-primary" />
-      </div>
-    );
+    return <PageLoadingSkeleton variant="table" />;
   }
 
   // Active client list based on mode
@@ -121,6 +149,22 @@ export default function ClientesPage() {
     
     return matchesSearch && matchesStatus;
   });
+
+  const portfolioClients = activeClients.filter(client => client.commercialStatus !== 'archived');
+  const statusCounts: Record<ClientFilter, number> = {
+    all: portfolioClients.length,
+    lead: activeClients.filter(client => client.commercialStatus === 'lead').length,
+    onboarding: activeClients.filter(client => client.commercialStatus === 'onboarding').length,
+    active: activeClients.filter(client => client.commercialStatus === 'active').length,
+    inactive: activeClients.filter(client => client.commercialStatus === 'inactive').length,
+    archived: activeClients.filter(client => client.commercialStatus === 'archived').length,
+  };
+  const hasActiveFilters = searchTerm.trim().length > 0 || statusFilter !== 'all';
+
+  const clearFilters = () => {
+    setSearchTerm('');
+    setStatusFilter('all');
+  };
 
   // Handle CNPJ search simulation
   const handleCnpjSearch = () => {
@@ -313,235 +357,278 @@ export default function ClientesPage() {
         { value: 'inactive', label: 'Inativo' }
       ];
 
-  const statusFiltersList = isDatabaseMode
+  const statusFiltersList: ClientFilter[] = isDatabaseMode
     ? ['all', 'lead', 'onboarding', 'active', 'inactive', 'archived']
     : ['all', 'lead', 'onboarding', 'active', 'inactive'];
 
   return (
-    <div className="space-y-6">
-      {/* Page Header */}
+    <div className="space-y-section" aria-busy={isLoading}>
       <UIHeader 
-        title="Gestão de Clientes" 
-        description={isDatabaseMode ? "Acompanhe e administre clientes reais cadastrados no PostgreSQL." : "Visualize e cadastre os clientes corporativos da sua carteira."}
+        variant="operational"
+        eyebrow="Carteira comercial"
+        title="Clientes"
+        description="Acompanhe contatos, responsáveis e o estágio comercial de cada cliente da organização."
         actions={
-          <Button onClick={handleOpenCreateModal} className="flex items-center gap-2">
-            <Plus className="h-4 w-4" /> Novo Cliente
+          <Button onClick={handleOpenCreateModal} className="gap-2">
+            <Plus className="h-4 w-4" aria-hidden="true" /> Novo cliente
           </Button>
         }
       />
 
-      {/* Filters & Search */}
-      <div className="flex flex-col md:flex-row items-center gap-4 justify-between bg-card p-4 rounded-xl border border-border/80 shadow-sm">
-        {/* Search */}
-        <div className="relative w-full md:w-80 flex items-center">
-          <Search className="absolute left-3 h-4 w-4 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder={isDatabaseMode ? "Pesquisar por nome, empresa, documento..." : "Pesquisar por nome, empresa, CNPJ..."}
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="h-10 w-full pl-9 pr-3 rounded-lg border border-border bg-background text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:border-primary transition-all placeholder:text-muted-foreground/75"
-          />
-        </div>
+      {loadError && (
+        <ErrorState
+          compact
+          description="A carteira não pôde ser atualizada. Os dados exibidos podem estar desatualizados."
+          onRetry={loadClients}
+        />
+      )}
 
-        {/* Status Filter */}
-        <div className="flex items-center gap-3 w-full md:w-auto">
-          <Filter className="h-4 w-4 text-muted-foreground shrink-0" />
-          <div className="flex gap-1.5 overflow-x-auto w-full md:w-auto">
-            {statusFiltersList.map((statusKey) => (
-              <button
-                key={statusKey}
-                onClick={() => setStatusFilter(statusKey)}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all cursor-pointer ${
-                  statusFilter === statusKey
-                    ? 'bg-primary text-primary-foreground border-primary shadow-sm'
-                    : 'bg-background text-muted-foreground border-border hover:text-foreground'
-                }`}
-              >
-                {statusKey === 'all' && 'Todos'}
-                {statusKey === 'lead' && 'Leads'}
-                {statusKey === 'onboarding' && 'Onboarding'}
-                {statusKey === 'active' && 'Ativos'}
-                {statusKey === 'inactive' && 'Inativos'}
-                {statusKey === 'archived' && 'Arquivados'}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Client List */}
-      <Card>
-        <CardContent className="p-0">
-          {filteredClients.length === 0 ? (
-            <div className="p-12">
-              <EmptyState 
-                title={isDatabaseMode ? "Nenhum cliente cadastrado ainda." : "Nenhum cliente encontrado"} 
-                description={isDatabaseMode ? "Cadastre seu primeiro cliente para começar a organizar sua operação." : "Experimente ajustar a busca ou clique no botão acima para cadastrar um novo cliente."}
-                actionLabel={isDatabaseMode ? "Cadastrar cliente" : "Cadastrar Cliente"}
-                onAction={handleOpenCreateModal}
-                icon={<Building2 className="h-6 w-6" />}
-              />
+      <section aria-label="Resumo da carteira" className="overflow-hidden rounded-lg border border-border bg-surface shadow-subtle">
+        <dl className="grid grid-cols-2 md:grid-cols-5">
+          {[
+            { label: 'Na carteira', value: statusCounts.all },
+            { label: 'Ativos', value: statusCounts.active },
+            { label: 'Em onboarding', value: statusCounts.onboarding },
+            { label: 'Leads', value: statusCounts.lead },
+            { label: 'Inativos', value: statusCounts.inactive },
+          ].map((item) => (
+            <div key={item.label} className="min-w-0 border-b border-r border-border px-4 py-3.5 even:border-r-0 last:col-span-2 last:border-b-0 last:border-r-0 md:col-span-1 md:border-b-0 md:even:border-r md:last:col-span-1 md:last:border-r-0">
+              <dt className="truncate text-caption font-semibold uppercase tracking-[0.12em] text-foreground-muted">{item.label}</dt>
+              <dd className="mt-1.5 font-mono text-xl font-semibold tabular-nums text-foreground">{item.value}</dd>
             </div>
-          ) : (
-            <>
-              {/* Desktop Table View */}
-              <div className="hidden md:block">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Empresa / Razão Social</TableHead>
-                      <TableHead>Contato Principal</TableHead>
-                      <TableHead>{isDatabaseMode ? "Documento" : "CNPJ"}</TableHead>
-                      <TableHead>Responsável</TableHead>
-                      <TableHead>Status Comercial</TableHead>
-                      <TableHead className="text-right">Ações</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredClients.map((client) => (
-                      <TableRow key={client.id}>
-                        <TableCell>
-                          <div className="font-semibold text-foreground">{client.companyName}</div>
-                          <div className="text-xs text-muted-foreground">{client.email || 'Sem e-mail'}</div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="text-foreground font-medium">{client.name}</div>
-                          <div className="text-xs text-muted-foreground">{client.phone || 'Sem telefone'}</div>
-                        </TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">{client.cnpj || 'Não informado'}</TableCell>
-                        <TableCell>
-                          <div className="text-xs font-medium text-foreground">{client.responsibleUser}</div>
-                        </TableCell>
-                        <TableCell>
-                          <StatusBadge type="client" status={client.commercialStatus} />
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-1.5">
-                            <Link href={`/clientes/${client.id}`}>
-                              <Button variant="outline" size="sm" className="h-8 gap-1.5">
-                                <Eye className="h-3.5 w-3.5" /> Detalhes
-                              </Button>
-                            </Link>
+          ))}
+        </dl>
+      </section>
 
-                            {isDatabaseMode && (
-                              <>
-                                <Button 
-                                  variant="outline" 
-                                  size="sm" 
-                                  className="h-8 gap-1 border-primary/30 text-primary hover:bg-primary/5"
-                                  onClick={() => handleOpenEditModal(client)}
-                                >
-                                  <Edit3 className="h-3.5 w-3.5" /> Editar
-                                </Button>
+      <TableToolbar
+        search={
+          <SearchInput
+            label="Buscar clientes"
+            placeholder={isDatabaseMode ? 'Buscar por nome, empresa ou documento' : 'Buscar por nome, empresa ou CNPJ'}
+            value={searchTerm}
+            onChange={event => setSearchTerm(event.target.value)}
+            onClear={() => setSearchTerm('')}
+          />
+        }
+        resultSummary={
+          <span aria-live="polite">
+            <strong className="font-mono font-semibold tabular-nums text-foreground">{filteredClients.length}</strong>
+            {' '}de {statusFilter === 'all' ? statusCounts.all : statusCounts[statusFilter]}
+          </span>
+        }
+        filters={
+          <>
+            <SlidersHorizontal className="h-4 w-4 shrink-0 text-foreground-muted" aria-hidden="true" />
+            <span className="shrink-0 text-label font-semibold text-foreground-secondary">Status</span>
+            <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto pb-0.5">
+              {statusFiltersList.map((statusKey) => (
+                <button
+                  key={statusKey}
+                  type="button"
+                  aria-pressed={statusFilter === statusKey}
+                  onClick={() => setStatusFilter(statusKey)}
+                  className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-label font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 ${
+                    statusFilter === statusKey
+                      ? 'border-primary/25 bg-primary-subtle text-primary'
+                      : 'border-border bg-surface-subtle text-foreground-muted hover:border-border-strong hover:text-foreground'
+                  }`}
+                >
+                  {clientStatusLabels[statusKey]}
+                  <span className="font-mono text-[0.625rem] tabular-nums opacity-75">{statusCounts[statusKey]}</span>
+                </button>
+              ))}
+            </div>
+            {hasActiveFilters && (
+              <Button type="button" variant="ghost" size="sm" className="h-7 shrink-0 gap-1.5 px-2" onClick={clearFilters}>
+                <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                <span className="hidden sm:inline">Limpar filtros</span>
+              </Button>
+            )}
+          </>
+        }
+      />
 
-                                {client.commercialStatus === 'archived' ? (
-                                  <Button 
-                                    variant="outline" 
-                                    size="sm" 
-                                    className="h-8 gap-1 border-success/30 text-success hover:bg-success/5"
-                                    onClick={() => handleRestoreClient(client.id)}
-                                  >
-                                    <RotateCcw className="h-3.5 w-3.5" /> Restaurar
-                                  </Button>
-                                ) : (
-                                  <Button 
-                                    variant="outline" 
-                                    size="sm" 
-                                    className="h-8 gap-1 border-danger/30 text-danger hover:bg-danger/5"
-                                    onClick={() => handleArchiveClient(client.id)}
-                                  >
-                                    <Archive className="h-3.5 w-3.5" /> Arquivar
-                                  </Button>
-                                )}
-                              </>
-                            )}
+      <section aria-labelledby="client-list-title" className="space-y-3">
+        <div className="flex items-end justify-between gap-4">
+          <div>
+            <h2 id="client-list-title" className="text-section-title font-semibold text-foreground">Carteira de clientes</h2>
+            <p className="mt-1 text-body-small text-foreground-muted">Dados essenciais e ações comerciais em uma única superfície.</p>
+          </div>
+          <span className="hidden font-mono text-caption tabular-nums text-foreground-muted sm:block">
+            {filteredClients.length} {filteredClients.length === 1 ? 'registro' : 'registros'}
+          </span>
+        </div>
+
+        {filteredClients.length === 0 ? (
+          <EmptyState
+            title={hasActiveFilters ? 'Nenhum cliente corresponde aos filtros.' : 'Nenhum cliente cadastrado ainda.'}
+            description={hasActiveFilters
+              ? 'Ajuste a busca ou remova os filtros para voltar a visualizar a carteira.'
+              : 'Cadastre o primeiro cliente para começar a organizar a operação comercial.'}
+            actionLabel={hasActiveFilters ? 'Limpar filtros' : 'Cadastrar cliente'}
+            onAction={hasActiveFilters ? clearFilters : handleOpenCreateModal}
+            icon={<Building2 className="h-5 w-5" aria-hidden="true" />}
+          />
+        ) : (
+          <>
+            <div className="hidden lg:block">
+              <Table variant="operational">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Cliente</TableHead>
+                    <TableHead className="hidden xl:table-cell">Contato</TableHead>
+                    <TableHead className="hidden 2xl:table-cell">{isDatabaseMode ? 'Documento' : 'CNPJ'}</TableHead>
+                    <TableHead className="hidden xl:table-cell">Responsável</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Ações</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filteredClients.map((client) => (
+                    <TableRow key={client.id}>
+                      <TableCell>
+                        <div className="flex min-w-0 items-center gap-3">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-primary-subtle font-mono text-caption font-bold tracking-wide text-primary">
+                            {getClientInitials(client.companyName)}
+                          </span>
+                          <div className="min-w-0">
+                            <div className="truncate font-semibold text-foreground">{client.companyName}</div>
+                            <div className="mt-0.5 truncate text-caption font-normal text-foreground-muted">{client.email || 'E-mail não informado'}</div>
                           </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-
-              {/* Mobile Card View */}
-              <div className="block md:hidden divide-y divide-border/30 px-4">
-                {filteredClients.map((client) => (
-                  <div key={client.id} className="py-4 space-y-3.5 first:pt-0 last:pb-0">
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        <span className="font-semibold text-sm text-foreground block">{client.companyName}</span>
-                        <span className="text-[10px] text-muted-foreground font-mono">Doc: {client.cnpj || 'Não informado'}</span>
-                      </div>
-                      <StatusBadge type="client" status={client.commercialStatus} />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3 text-xs text-muted-foreground">
-                      <div className="p-2 bg-muted/20 border border-border/40 rounded-lg">
-                        <span className="text-[10px] text-muted-foreground block">Contato</span>
-                        <strong className="text-foreground text-xs block mt-0.5 truncate">{client.name}</strong>
-                      </div>
-                      <div className="p-2 bg-muted/20 border border-border/40 rounded-lg">
-                        <span className="text-[10px] text-muted-foreground block">Telefone</span>
-                        <strong className="text-foreground text-xs block mt-0.5 truncate">{client.phone || 'N/A'}</strong>
-                      </div>
-                      <div className="p-2 bg-muted/20 border border-border/40 rounded-lg col-span-2">
-                        <span className="text-[10px] text-muted-foreground block">Email</span>
-                        <strong className="text-foreground text-[11px] block mt-0.5 truncate">{client.email || 'N/A'}</strong>
-                      </div>
-                      <div className="p-2 bg-muted/20 border border-border/40 rounded-lg">
-                        <span className="text-[10px] text-muted-foreground block">Responsável</span>
-                        <strong className="text-foreground text-xs block mt-0.5 truncate">{client.responsibleUser}</strong>
-                      </div>
-                    </div>
-
-                    <div className="flex gap-2 pt-1">
-                      <Link href={`/clientes/${client.id}`} className="flex-1">
-                        <Button variant="outline" size="sm" className="w-full h-8.5 text-xs gap-1.5">
-                          <Eye className="h-3.5 w-3.5" /> Detalhes
-                        </Button>
-                      </Link>
-
-                      {isDatabaseMode && (
-                        <>
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            className="h-8.5 text-xs gap-1 border-primary/30 text-primary"
-                            onClick={() => handleOpenEditModal(client)}
+                        </div>
+                      </TableCell>
+                      <TableCell className="hidden xl:table-cell">
+                        <div className="font-medium text-foreground-secondary">{client.name}</div>
+                        <div className="mt-0.5 text-caption font-normal text-foreground-muted">{client.phone || 'Telefone não informado'}</div>
+                      </TableCell>
+                      <TableCell className="hidden font-mono text-caption font-normal text-foreground-muted 2xl:table-cell">
+                        {client.cnpj || 'Não informado'}
+                      </TableCell>
+                      <TableCell className="hidden text-body-small font-medium text-foreground-secondary xl:table-cell">
+                        {client.responsibleUser || 'Não atribuído'}
+                      </TableCell>
+                      <TableCell>
+                        <StatusBadge type="client" status={client.commercialStatus} />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <Link
+                            href={`/clientes/${client.id}`}
+                            className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-label font-semibold text-foreground-secondary transition-colors hover:bg-surface-subtle hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35"
                           >
-                            <Edit3 className="h-3.5 w-3.5" />
-                          </Button>
-
-                          {client.commercialStatus === 'archived' ? (
-                            <Button 
-                              variant="outline" 
-                              size="sm" 
-                              className="h-8.5 text-xs gap-1 border-success/30 text-success"
-                              onClick={() => handleRestoreClient(client.id)}
-                            >
-                              <RotateCcw className="h-3.5 w-3.5" />
-                            </Button>
-                          ) : (
-                            <Button 
-                              variant="outline" 
-                              size="sm" 
-                              className="h-8.5 text-xs gap-1 border-danger/30 text-danger"
-                              onClick={() => handleArchiveClient(client.id)}
-                            >
-                              <Archive className="h-3.5 w-3.5" />
-                            </Button>
+                            Abrir <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                          </Link>
+                          {isDatabaseMode && (
+                            <Dropdown
+                              label={`Ações de ${client.companyName}`}
+                              items={[
+                                {
+                                  label: 'Editar cliente',
+                                  icon: <Edit3 className="h-4 w-4" aria-hidden="true" />,
+                                  onClick: () => handleOpenEditModal(client),
+                                },
+                                client.commercialStatus === 'archived'
+                                  ? {
+                                      label: 'Restaurar cliente',
+                                      icon: <RotateCcw className="h-4 w-4" aria-hidden="true" />,
+                                      onClick: () => handleRestoreClient(client.id),
+                                    }
+                                  : {
+                                      label: 'Arquivar cliente',
+                                      icon: <Archive className="h-4 w-4" aria-hidden="true" />,
+                                      onClick: () => handleArchiveClient(client.id),
+                                      variant: 'danger' as const,
+                                    },
+                              ]}
+                            />
                           )}
-                        </>
-                      )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+
+            <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-subtle lg:hidden">
+              <ul className="divide-y divide-border" aria-label="Clientes encontrados">
+                {filteredClients.map((client) => (
+                  <li key={client.id} className="px-4 py-4 sm:px-5">
+                    <div className="flex items-start gap-3">
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-primary-subtle font-mono text-caption font-bold tracking-wide text-primary">
+                        {getClientInitials(client.companyName)}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <h3 className="truncate text-body-small font-semibold text-foreground">{client.companyName}</h3>
+                            <p className="mt-0.5 truncate text-caption text-foreground-muted">{client.name}</p>
+                          </div>
+                          <StatusBadge type="client" status={client.commercialStatus} />
+                        </div>
+
+                        <dl className="mt-3 grid gap-x-4 gap-y-2 text-caption sm:grid-cols-2">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <Mail className="h-3.5 w-3.5 shrink-0 text-foreground-muted" aria-hidden="true" />
+                            <dt className="sr-only">E-mail</dt>
+                            <dd className="truncate text-foreground-secondary">{client.email || 'E-mail não informado'}</dd>
+                          </div>
+                          <div className="flex min-w-0 items-center gap-2">
+                            <Phone className="h-3.5 w-3.5 shrink-0 text-foreground-muted" aria-hidden="true" />
+                            <dt className="sr-only">Telefone</dt>
+                            <dd className="truncate text-foreground-secondary">{client.phone || 'Telefone não informado'}</dd>
+                          </div>
+                          <div className="min-w-0">
+                            <dt className="text-[0.625rem] font-semibold uppercase tracking-[0.1em] text-foreground-muted">Responsável</dt>
+                            <dd className="mt-0.5 truncate text-foreground-secondary">{client.responsibleUser || 'Não atribuído'}</dd>
+                          </div>
+                          <div className="min-w-0">
+                            <dt className="text-[0.625rem] font-semibold uppercase tracking-[0.1em] text-foreground-muted">{isDatabaseMode ? 'Documento' : 'CNPJ'}</dt>
+                            <dd className="mt-0.5 truncate font-mono text-foreground-secondary">{client.cnpj || 'Não informado'}</dd>
+                          </div>
+                        </dl>
+
+                        <div className="mt-3 flex items-center justify-end gap-1 border-t border-border pt-3">
+                          <Link
+                            href={`/clientes/${client.id}`}
+                            className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-label font-semibold text-foreground-secondary transition-colors hover:bg-surface-subtle hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35"
+                          >
+                            Abrir cliente <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                          </Link>
+                          {isDatabaseMode && (
+                            <Dropdown
+                              label={`Ações de ${client.companyName}`}
+                              items={[
+                                {
+                                  label: 'Editar cliente',
+                                  icon: <Edit3 className="h-4 w-4" aria-hidden="true" />,
+                                  onClick: () => handleOpenEditModal(client),
+                                },
+                                client.commercialStatus === 'archived'
+                                  ? {
+                                      label: 'Restaurar cliente',
+                                      icon: <RotateCcw className="h-4 w-4" aria-hidden="true" />,
+                                      onClick: () => handleRestoreClient(client.id),
+                                    }
+                                  : {
+                                      label: 'Arquivar cliente',
+                                      icon: <Archive className="h-4 w-4" aria-hidden="true" />,
+                                      onClick: () => handleArchiveClient(client.id),
+                                      variant: 'danger' as const,
+                                    },
+                              ]}
+                            />
+                          )}
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  </li>
                 ))}
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
+              </ul>
+            </div>
+          </>
+        )}
+      </section>
 
       {/* Register/Edit Client Modal */}
       <Modal
